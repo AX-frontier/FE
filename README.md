@@ -1,77 +1,97 @@
 # 한성대학교 AI 통합 정보 서비스
 
 메타 에이전트 기반 대학 정보 통합 AI 서비스 프론트엔드입니다.
+학생·교직원이 자연어 질문 하나로 학교 정보, 학술정보관, 행정 결재 문서 검토까지 한 번에 이용할 수 있는 통합 인터페이스입니다.
 
 ## 기술 스택
 
-- **Vite** + **React 19** + **TypeScript**
+- **Vite 6** + **React 19** + **TypeScript**
 - **Tailwind CSS 4**
-- **TanStack Query** + **Axios**
 - **React Router v7**
-- **pnpm**
+- **lucide-react** (아이콘)
+- **Pretendard** 폰트
 
 ## 프로젝트 구조
 
 ```
 src/
-├── apis/                  # API 통신
-├── assets/                # 정적 자원
 ├── components/
 │   └── common/
-│       ├── Header/        # 상단 네비게이션
-│       ├── Sidebar/       # 대화 기록 사이드바
-│       └── AgentBadge/    # 에이전트 배지
-├── constants/             # 라우트 등 상수
+│       ├── AgentBadge/    # 에이전트 배지 (메인 / 학술정보관 / 문서결재)
+│       └── Sidebar/       # 대화 기록 사이드바
+├── constants/             # 라우트 상수
 ├── pages/
-│   ├── home/              # 메인 홈페이지
+│   ├── home/              # 메인 홈페이지 (영상 배경 + 검색 + 한성소식 슬라이드)
 │   └── chat/              # 통합 채팅 페이지
-│       └── components/    # DocumentReview UI
+│       └── components/
+│           └── DocumentReview.tsx  # 문서 검수 UI
 ├── router/                # 라우팅 설정
-├── styles/                # 전역 스타일
-├── types/                 # 타입 정의
+├── styles/
+│   └── app.css            # 디자인 토큰 + 전역 스타일
+├── types/
+│   └── chat.ts            # 메시지 / 에이전트 타입
 └── utils/
-    └── aiService.ts       # Claude API 연동 + 에이전트 감지
+    └── aiService.ts       # Claude API 연동 + 메타 에이전트 라우팅
 ```
 
 ## 에이전트 시스템
 
+사용자가 에이전트를 직접 선택하지 않아도, 메시지 내용을 분석해 자동으로 적합한 에이전트로 라우팅합니다.
+
 | 에이전트 | 트리거 키워드 | 역할 |
 |---|---|---|
-| 🎓 한성 AI (메인) | 일반 학교 정보 | 기본 응답 계층 |
-| 📚 학술정보관 AI | 도서관, 도서, 대출, DB... | 학술정보관 이용·도서 검색 |
-| 📋 문서 결재 AI | 결재, 문서, 기안, 공문... | 행정 결재 문서 검토 |
+| 한성 AI (메인) | 일반 학교 정보 | 공지·학사·시설·행정 등 기본 안내 |
+| 학술정보관 AI | 도서관, 도서, 대출, 반납, DB, 열람실... | 학술정보관 이용 안내 및 도서 검색 |
+| 문서 결재 AI | 결재, 문서, 기안, 공문, 검수, 붙임... | 행정 결재 문서 형식 검토 및 수정안 제시 |
+
+## 주요 기능
+
+- **영상 배경 홈페이지** — `public/hansung_main.mp4` 재생, 헤더는 투명 → 호버 시 흰색 전환
+- **통합 검색창** — 질문 입력 후 `/chat` 으로 이동, 메타 에이전트가 자동 분류
+- **빠른 메뉴** — 검색창 좌측 도트 버튼으로 12개 주요 서비스 바로가기 (glassmorphism 패널)
+- **한성소식 슬라이드** — 4개 뉴스가 5초 간격 자동 순환, 도트 인디케이터로 수동 이동
+- **문서 검수** — 두문·본문·결문 단위 형식 적합도 점수 및 수정안 제공
 
 ## 시작하기
 
 ```bash
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
 ## 빌드
 
 ```bash
-pnpm build
+npm run build
 ```
 
-## 브랜드 컬러
+## 환경 변수
 
-| 컬러 | Hex | 용도 |
-|---|---|---|
-| Sky Blue | `#00AEEF` | 강조, 그라디언트 |
-| Blue | `#003DA5` | 메인 |
-| Dark Blue | `#002060` | 제목, 강조 |
-| Gray | `#6D6E71` | 보조 텍스트 |
+Claude API 연동을 위해 프로젝트 루트에 `.env` 파일을 생성하세요. (`.gitignore`에 포함되어 있어 커밋되지 않습니다.)
+
+```
+VITE_ANTHROPIC_API_KEY=sk-ant-...
+```
 
 ## 영상 배경
 
-홈페이지 히어로 섹션에 영상이 들어갑니다.  
-`public/hero.mp4` 경로에 mp4 파일을 넣으면 자동으로 재생됩니다.
+홈페이지 배경 영상은 `public/hansung_main.mp4` 경로에 mp4 파일을 넣으면 자동 재생됩니다.
+
+## 브랜드 컬러
+
+| 토큰 | Hex | 용도 |
+|---|---|---|
+| `--blue` | `#003DA5` | 메인 브랜드 컬러 |
+| `--blue-dark` | `#002060` | 제목·강조 |
+| `--blue-sky` | `#00AEEF` | 포인트 |
+| `--blue-tint` | `#EBF1FF` | 배경 강조 |
 
 ## 커밋 컨벤션
 
 ```
-[feat/#이슈번호] 기능 설명
-[fix/#이슈번호] 버그 수정
-[design/#이슈번호] UI/UX 작업
+feat:   새 기능
+fix:    버그 수정
+design: UI/UX 작업
+refactor: 리팩토링
+docs:   문서 수정
 ```
