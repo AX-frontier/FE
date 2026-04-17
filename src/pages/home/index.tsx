@@ -4,6 +4,7 @@ import {
   Search, ChevronLeft, ChevronRight, X,
   Mail, Globe, BookOpen, Briefcase, FileCheck, Megaphone,
   MonitorPlay, GraduationCap, Gift, Building2, CalendarDays, FlaskConical,
+  ExternalLink,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -113,6 +114,17 @@ export default function HomePage() {
 
       {/* ── Dark overlay ── */}
       <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,12,40,0.62)', zIndex: 1 }} />
+
+      {/* ── Floating legacy homepage button ── */}
+      <a
+        href="https://www.hansung.ac.kr"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="floating-legacy-btn"
+      >
+        <ExternalLink size={14} />
+        기존 홈페이지
+      </a>
 
       {/* ── Header ── */}
       <header className="site-header" style={{ zIndex: 100 }}>
