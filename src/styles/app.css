@@ -107,14 +107,45 @@ body {
 }
 
 .msg-ai {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: 4px 18px 18px 18px;
   padding: 12px 16px;
   font-size: 0.875rem;
   line-height: 1.7;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04);
   word-break: break-word;
+}
+
+/* ── 에이전트 인라인 헤더 ── */
+.msg-agent-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+
+.msg-agent-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
+}
+
+.msg-agent-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: -0.01em;
 }
 
 /* ───── Search bar ───── */
@@ -183,7 +214,9 @@ body {
   position: fixed;
   top: 100px; left: 0; bottom: 0;
   width: 260px;
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(20px) saturate(180%) brightness(1.02);
+  -webkit-backdrop-filter: blur(20px) saturate(180%) brightness(1.02);
   border-right: 1px solid var(--border);
   z-index: 80;
   overflow-y: auto;
@@ -288,6 +321,146 @@ body {
 }
 .news-row:last-child { border-bottom: none; }
 .news-row:hover { background: var(--bg); }
+
+/* ───── Chat page ───── */
+.chat-page-bg {
+  background:
+    radial-gradient(ellipse at 15% 15%, rgba(0, 61, 165, 0.09) 0%, transparent 50%),
+    radial-gradient(ellipse at 85% 80%, rgba(0, 174, 239, 0.07) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 10%, rgba(0, 80, 204, 0.06) 0%, transparent 40%),
+    radial-gradient(ellipse at 30% 85%, rgba(0, 32, 96, 0.05) 0%, transparent 40%),
+    #F4F5F7;
+}
+
+.site-header.chat-mode {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px) saturate(160%) brightness(1.03);
+  -webkit-backdrop-filter: blur(20px) saturate(160%) brightness(1.03);
+  border-bottom-color: var(--border);
+}
+.site-header.chat-mode:hover {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+/* ───── Agent Discovery Card ───── */
+@keyframes scanBar {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+@keyframes revealCard {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.agent-discovery-card {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1.5px solid;
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.agent-discovery-card.searching {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.agent-discovery-card.found {
+  animation: revealCard 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.agent-discovery-card.found-main {
+  border-color: rgba(0, 61, 165, 0.25);
+  background: linear-gradient(135deg, rgba(0, 61, 165, 0.04) 0%, var(--surface) 100%);
+}
+.agent-discovery-card.found-library {
+  border-color: rgba(11, 110, 79, 0.25);
+  background: linear-gradient(135deg, rgba(11, 110, 79, 0.04) 0%, var(--surface) 100%);
+}
+.agent-discovery-card.found-document {
+  border-color: rgba(107, 58, 15, 0.25);
+  background: linear-gradient(135deg, rgba(107, 58, 15, 0.04) 0%, var(--surface) 100%);
+}
+
+.scan-track {
+  height: 3px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: var(--border);
+}
+.scan-fill {
+  height: 100%;
+  width: 40%;
+  border-radius: 99px;
+  background: var(--blue);
+  animation: scanBar 1.1s ease-in-out infinite;
+}
+
+/* ───── Scroll-driven 메시지 등장 애니메이션 ───── */
+@supports (animation-timeline: view()) {
+  .msg-wrapper {
+    animation: fadeUp linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 28%;
+  }
+}
+
+@supports not (animation-timeline: view()) {
+  .msg-wrapper {
+    animation: fadeUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+/* AI 버블 에이전트 컬러 왼쪽 테두리 */
+.msg-ai-main     { border-left: 3px solid var(--agent-main); }
+.msg-ai-library  { border-left: 3px solid var(--agent-library); }
+.msg-ai-document { border-left: 3px solid var(--agent-document); }
+
+/* 제안 칩 카드 hover transition */
+.suggestion-chip {
+  transition: border-color 0.15s, background 0.15s, color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.suggestion-chip:hover {
+  border-color: var(--blue) !important;
+  background: var(--blue-tint) !important;
+  color: var(--blue) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0,61,165,0.13) !important;
+}
+
+/* ───── Floating button (home) ───── */
+.floating-legacy-btn {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: rgba(255,255,255,0.15);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 9999px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  transition: background 0.2s, transform 0.2s, box-shadow 0.2s;
+  letter-spacing: -0.01em;
+  font-family: 'PretendardVariable', 'Pretendard', 'Noto Sans KR', -apple-system, sans-serif;
+}
+.floating-legacy-btn:hover {
+  background: rgba(255,255,255,0.25);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.28);
+}
 
 /* ───── Btn ───── */
 .btn-blue {
