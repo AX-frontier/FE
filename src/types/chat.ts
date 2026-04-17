@@ -7,6 +7,8 @@ export interface Message {
   agentType?: AgentType;
   timestamp: Date;
   isTyping?: boolean;
+  isAgentDiscovery?: boolean;
+  isSearching?: boolean;
   documentReview?: DocumentReviewResult;
 }
 
