@@ -2,16 +2,18 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
 import type { Message, AgentType, ChatHistory } from '@/types/chat';
-import { detectAgent, callClaudeAPI } from '@/utils/aiService';
-import AgentBadge, { agentConfig } from '@/components/common/AgentBadge';
+import { detectAgent, reviewDocument, sendQueryToSpring } from '@/utils/aiService';
+import  { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
-import { DocumentInput, ReviewResult } from './components/DocumentReview';
+import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
 
 type DisplayMessage = Message & {
   reviewScore?: number;
   correctedText?: string;
+  correctedHtml?: string | null;
   feedbackText?: string;
   showDocInput?: boolean;
+  initialDocText?: string;
 };
 
 const SUGGESTIONS = [
@@ -74,11 +76,12 @@ export default function ChatPage() {
       }, 700);
     }
 
-    if (agent === 'document' && !text.includes('\n')) {
+    if (agent === 'document') {
       push({
         id: `doc-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-        content: `네, 작성하신 문서의 검수를 도와드리겠습니다.\n해당 문서는 본교 행정 업무 운영 지침 및 공문서 작성 준칙에 의거하여 검토를 진행할 예정입니다.\n피드백이 필요한 문서의 본문을 하단 박스에 텍스트로 입력해 주세요.`,
+        content: `네, 작성하신 문서의 검수를 도와드리겠습니다.\n아래 전용 입력 박스에 전자결재 본문을 붙여넣어 주세요. 표가 HTML로 복사되는 경우 표 구조도 함께 인식합니다.`,
         showDocInput: true,
+        initialDocText: text.includes('\n') ? text : undefined,
       });
       return;
     }
@@ -88,9 +91,14 @@ export default function ChatPage() {
     convRef.current = [...convRef.current, { role: 'user', content: text }];
 
     try {
-      const res = await callClaudeAPI(convRef.current, agent);
-      convRef.current = [...convRef.current, { role: 'assistant', content: res }];
-      setMessages(p => p.map(m => m.id === tid ? { ...m, content: res, isTyping: false } : m));
+      const res = await sendQueryToSpring(text);
+      convRef.current = [...convRef.current, { role: 'assistant', content: res.answer }];
+      setMessages(p => p.map(m => m.id === tid ? {
+        ...m,
+        agentType: res.targetAgent.toLowerCase() as AgentType,
+        content: res.answer,
+        isTyping: false,
+      } : m));
     } catch {
       setMessages(p => p.map(m => m.id === tid ? { ...m, content: '죄송합니다. 일시적인 오류가 발생했습니다.', isTyping: false } : m));
     } finally {
@@ -98,26 +106,33 @@ export default function ChatPage() {
     }
   };
 
-  const handleDocSubmit = async (docText: string) => {
+  const handleDocSubmit = async (doc: DocumentSubmitPayload) => {
     setIsLoading(true);
     push({ id: `check-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
       content: '작성하신 문서를 ○○ 규정 및 공문서 작성 준칙에 따라 정밀 검토 중입니다. 잠시만 기다려 주세요.' });
 
-    const prompt = `다음 공문서를 검토해주세요.\n1. 형식 적합도 점수 (0-100)\n2. 두문/본문/결문 섹션별 상태와 설명\n3. 보완 사항\n4. 수정된 문서 전문 (---수정문서--- 태그 사이에)\n\n문서:\n${docText}`;
-    convRef.current = [...convRef.current, { role: 'user', content: prompt }];
-
     try {
-      const res = await callClaudeAPI(convRef.current, 'document');
-      const scoreMatch    = res.match(/\b(\d{1,3})\b/);
-      const score         = scoreMatch ? parseInt(scoreMatch[1]) : 76;
-      const corrMatch     = res.match(/---수정문서---([\s\S]*?)---수정문서---/);
-      const correctedText = corrMatch ? corrMatch[1].trim() : docText;
-      const feedbackText  = res.replace(/---수정문서---[\s\S]*?---수정문서---/, '').trim();
+      const res = await reviewDocument({
+        title: '전자결재 문서',
+        docType: 'OFFICIAL_DOCUMENT',
+        bodyText: doc.text,
+        bodyHtml: doc.html,
+        editorJson: doc.editorJson as Record<string, unknown>,
+      });
+      const findingCount = res.summary.totalFindingCount;
+      const score = Math.max(55, 95 - findingCount * 5 - res.checkRequiredItems.length * 3);
+      const tableSummary = res.extractedTables.length
+        ? `\n\n인식된 표: ${res.extractedTables.length}개\n${res.extractedTables.map(table => `- 표 ${table.index}: ${table.rowCount}행 x ${table.columnCount}열`).join('\n')}`
+        : '\n\n인식된 표: 없음';
+      const feedbackText = `${res.reviewMarkdown}${tableSummary}`;
 
       push({
         id: `result-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-        content: `문서 분석이 완료되었습니다. **${Math.max(1, 5 - Math.floor(score / 20))}건의 보완 사항**이 식별되었습니다.`,
-        reviewScore: score, correctedText, feedbackText,
+        content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**과 **${res.checkRequiredItems.length}건의 확인 항목**이 식별되었습니다.`,
+        reviewScore: score,
+        correctedText: res.revisedDocument.content,
+        correctedHtml: res.revisedDocument.htmlContent,
+        feedbackText,
       });
     } catch {
       push({ id: `err-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(), content: '문서 검토 중 오류가 발생했습니다.' });
@@ -349,13 +364,18 @@ export default function ChatPage() {
                     )}
                     {/* Doc input widget */}
                     {msg.showDocInput && (
-                      <DocumentInput onSubmit={handleDocSubmit} isLoading={isLoading} />
+                      <DocumentInput
+                        onSubmit={handleDocSubmit}
+                        isLoading={isLoading}
+                        initialText={msg.initialDocText}
+                      />
                     )}
                     {/* Review result */}
                     {msg.reviewScore !== undefined && (
                       <ReviewResult
                         score={msg.reviewScore}
                         correctedText={msg.correctedText ?? ''}
+                        correctedHtml={msg.correctedHtml}
                         feedbackText={msg.feedbackText ?? ''}
                       />
                     )}
@@ -401,6 +421,19 @@ export default function ChatPage() {
                   { Icon: FileCheck, title: '문서 검수' },
                 ].map(({ Icon, title }) => (
                   <button key={title} title={title}
+                    onClick={() => {
+                      if (title === '문서 검수') {
+                        setCurrentAgent('document');
+                        push({
+                          id: `doc-${Date.now()}`,
+                          role: 'assistant',
+                          agentType: 'document',
+                          timestamp: new Date(),
+                          content: '아래 전용 입력 박스에 전자결재 본문을 붙여넣어 주세요.',
+                          showDocInput: true,
+                        });
+                      }
+                    }}
                     style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 6, borderRadius: 5,
                       color: 'var(--text-3)', display: 'flex', alignItems: 'center', transition: 'color 0.12s, background 0.12s' }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg)'; e.currentTarget.style.color = 'var(--text-2)'; }}
