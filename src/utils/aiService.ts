@@ -1,5 +1,87 @@
 import type { AgentType } from '@/types/chat';
 
+export interface DocumentReviewPayload {
+  title?: string;
+  docType?: string;
+  bodyText: string;
+  bodyHtml: string;
+  editorJson?: Record<string, unknown>;
+}
+
+export interface DocumentReviewApiResponse {
+  targetAgent: 'DOCUMENT_REVIEW';
+  intent: 'DOCUMENT_REVIEW';
+  answer: string;
+  confidence: number;
+  fallbackUsed: boolean;
+  fallbackReason?: string | null;
+  summary: {
+    overallOpinion: string;
+    totalFindingCount: number;
+    highCount: number;
+    mediumCount: number;
+    lowCount: number;
+  };
+  findings: Array<{
+    id: string;
+    ruleCode: string;
+    category: string;
+    severity: 'HIGH' | 'MEDIUM' | 'LOW';
+    lineStart: number;
+    originalText: string;
+    suggestedText?: string | null;
+    reason: string;
+  }>;
+  checkRequiredItems: Array<{
+    id: string;
+    category: string;
+    message: string;
+  }>;
+  formatNoticeItems: Array<{
+    category: string;
+    message: string;
+  }>;
+  extractedTables: Array<{
+    index: number;
+    rowCount: number;
+    columnCount: number;
+    rows: string[][];
+  }>;
+  revisedDocument: {
+    format: 'plain_text';
+    content: string;
+    htmlContent?: string | null;
+  };
+  reviewMarkdown: string;
+}
+
+export interface SpringQueryResponse {
+  success: boolean;
+  code: string;
+  message: string;
+  data: SpringQueryData;
+}
+
+export interface SpringQueryData {
+    targetAgent: string;
+    intent: string;
+    answer: string;
+    sources: unknown[];
+    confidence: number;
+    fallbackUsed: boolean;
+    fallbackReason?: string | null;
+    searchKeyword?: string | null;
+    resultCount?: number | null;
+    matchedBooks?: unknown[] | null;
+    summary?: DocumentReviewApiResponse['summary'] | null;
+    findings?: DocumentReviewApiResponse['findings'] | null;
+    checkRequiredItems?: DocumentReviewApiResponse['checkRequiredItems'] | null;
+    formatNoticeItems?: DocumentReviewApiResponse['formatNoticeItems'] | null;
+    extractedTables?: DocumentReviewApiResponse['extractedTables'] | null;
+    revisedDocument?: DocumentReviewApiResponse['revisedDocument'] | null;
+    reviewMarkdown?: string | null;
+}
+
 export function detectAgent(query: string): AgentType {
   const libraryKeywords = ['도서관', '학술정보관', '도서', '책', '대출', '반납', '전자책', '학술DB', 'DB', '열람실', '좌석', '연체'];
   const documentKeywords = ['결재', '문서', '기안', '공문', '검토', '피드백', '검수', '본문', '붙임', '수신', '발신'];
@@ -10,51 +92,82 @@ export function detectAgent(query: string): AgentType {
   return 'main';
 }
 
-export async function callClaudeAPI(
-  messages: { role: 'user' | 'assistant'; content: string }[],
-  agentType: AgentType
-): Promise<string> {
-  const systemPrompts: Record<AgentType, string> = {
-    main: `당신은 한성대학교(Hansung University)의 AI 통합 정보 서비스 '한성 AI'입니다. 
-학생, 교직원, 교수에게 학교 관련 정보를 친절하고 정확하게 안내합니다.
-학사일정, 공지사항, 학교 시설, 부서 연락처, 일반 행정 절차 등에 대해 답변합니다.
-모르는 정보에 대해서는 솔직히 말하고 공식 채널을 안내합니다.
-답변은 간결하고 명확하게, 필요시 핵심 포인트를 정리해서 제공합니다.`,
+export async function sendQueryToSpring(message: string): Promise<SpringQueryResponse['data']> {
+  const baseUrl = import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
+  const response = await fetch(`${baseUrl}/document-review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      queryUid: crypto.randomUUID(),
+      traceId: crypto.randomUUID(),
+      conversationUid: crypto.randomUUID(),
+      userId: 'local-fe-user',
+      message,
+    }),
+  });
 
-    library: `당신은 한성대학교 학술정보관 AI입니다.
-도서관 이용 안내(운영시간, 대출/반납, 열람실, 전자자료, 학술DB 등)와 도서 검색을 전문으로 합니다.
-도서 관련 질문은 제목, 저자, 분야 등을 기반으로 추천하거나 검색 결과를 안내합니다.
-학술정보관 홈페이지(library.hansung.ac.kr) 관련 안내도 포함합니다.
-친절하고 구체적으로 답변합니다.`,
-
-    document: `당신은 한성대학교 행정 결재 문서 본문 검토 AI입니다.
-공문서 작성 규정과 한성대학교 문서 작성 기준에 따라 제출된 문서를 검토합니다.
-두문(수신란, 제목), 본문(목적/배경/요청사항), 결문("끝" 표기, 날짜, 서명) 구조를 점검합니다.
-형식 오류, 표현 문제, 누락 항목을 찾아 구체적인 수정 방향을 제시합니다.
-검토 결과는 형식 적합도(0-100%), 항목별 상태(두문/본문/결문), 보완 사항 목록으로 제공합니다.`
-  };
-
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: systemPrompts[agentType],
-        messages,
-      }),
-    });
-
-    const data = await response.json();
-    const text = data.content?.map((b: { type: string; text?: string }) => b.type === 'text' ? b.text : '').join('') ?? '';
-    return text;
-  } catch (err) {
-    console.error('API error:', err);
-    return '죄송합니다. 현재 서비스에 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.';
+  if (!response.ok) {
+    throw new Error(`Spring query failed: ${response.status}`);
   }
+
+  const payload = (await response.json()) as SpringQueryResponse;
+  if (!payload.success) {
+    throw new Error(payload.message);
+  }
+  return payload.data;
 }
 
 export function generateChatTitle(query: string): string {
   return query.length > 20 ? query.substring(0, 20) + '...' : query;
+}
+
+export async function reviewDocument(payload: DocumentReviewPayload): Promise<DocumentReviewApiResponse> {
+  const baseUrl = import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
+  const response = await fetch(`${baseUrl}/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      queryUid: crypto.randomUUID(),
+      traceId: crypto.randomUUID(),
+      conversationUid: crypto.randomUUID(),
+      userId: 'local-fe-user',
+      message: '전자결재 문서를 검토해줘',
+      document: payload,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Document review failed: ${response.status}`);
+  }
+
+  const wrapped = (await response.json()) as SpringQueryResponse;
+  if (!wrapped.success) {
+    throw new Error(wrapped.message);
+  }
+  const data = wrapped.data;
+  return {
+    targetAgent: 'DOCUMENT_REVIEW',
+    intent: 'DOCUMENT_REVIEW',
+    answer: data.answer,
+    confidence: data.confidence,
+    fallbackUsed: data.fallbackUsed,
+    fallbackReason: data.fallbackReason,
+    summary: data.summary ?? {
+      overallOpinion: data.answer,
+      totalFindingCount: 0,
+      highCount: 0,
+      mediumCount: 0,
+      lowCount: 0,
+    },
+    findings: data.findings ?? [],
+    checkRequiredItems: data.checkRequiredItems ?? [],
+    formatNoticeItems: data.formatNoticeItems ?? [],
+    extractedTables: data.extractedTables ?? [],
+    revisedDocument: data.revisedDocument ?? {
+      format: 'plain_text',
+      content: data.answer,
+      htmlContent: null,
+    },
+    reviewMarkdown: data.reviewMarkdown ?? data.answer,
+  };
 }
