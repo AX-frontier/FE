@@ -2,8 +2,14 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
 import type { Message, AgentType, ChatHistory } from '@/types/chat';
-import { detectAgent, callClaudeAPI } from '@/utils/aiService';
-import AgentBadge, { agentConfig } from '@/components/common/AgentBadge';
+import {
+  createQueryContext,
+  detectAgentFromResponse,
+  postCoreQuery,
+  postDocumentReview,
+  type QueryContext,
+} from '@/utils/aiService';
+import { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
 import { DocumentInput, ReviewResult } from './components/DocumentReview';
 
@@ -29,6 +35,7 @@ export default function ChatPage() {
   const [isLoading, setIsLoading]       = useState(false);
   const [currentAgent, setCurrentAgent] = useState<AgentType>('main');
   const [sidebarOpen, setSidebarOpen]   = useState(false);
+  const [pendingDocumentContext, setPendingDocumentContext] = useState<QueryContext | null>(null);
   const [histories] = useState<ChatHistory[]>([
     { id: '1', title: '올해의 한성대생 철학책 추천', lastMessage: '마흔에 읽는 쇼펜하우어...', timestamp: new Date() },
     { id: '2', title: '장학금 신청 바로가기',       lastMessage: '장학금 신청은 포털에서...',  timestamp: new Date() },
@@ -37,7 +44,6 @@ export default function ChatPage() {
 
   const bottomRef   = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const convRef     = useRef<{ role: 'user' | 'assistant'; content: string }[]>([]);
 
   const scrollBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -57,40 +63,39 @@ export default function ChatPage() {
     const text = (override ?? input).trim();
     if (!text || isLoading) return;
     setInput('');
-
-    const agent = detectAgent(text);
-    setCurrentAgent(agent);
+    setIsLoading(true);
 
     push({ id: Date.now().toString(), role: 'user', content: text, timestamp: new Date() });
 
-    if (agent !== currentAgent || messages.length === 0) {
-      const discoveryId = `discovery-${Date.now()}`;
-      push({
-        id: discoveryId, role: 'assistant', content: '', agentType: agent,
-        timestamp: new Date(), isAgentDiscovery: true, isSearching: true,
-      });
-      setTimeout(() => {
-        setMessages(p => p.map(m => m.id === discoveryId ? { ...m, isSearching: false } : m));
-      }, 700);
-    }
-
-    if (agent === 'document' && !text.includes('\n')) {
-      push({
-        id: `doc-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-        content: `네, 작성하신 문서의 검수를 도와드리겠습니다.\n해당 문서는 본교 행정 업무 운영 지침 및 공문서 작성 준칙에 의거하여 검토를 진행할 예정입니다.\n피드백이 필요한 문서의 본문을 하단 박스에 텍스트로 입력해 주세요.`,
-        showDocInput: true,
-      });
-      return;
-    }
-
     const tid = `typing-${Date.now()}`;
-    push({ id: tid, role: 'assistant', content: '', agentType: agent, timestamp: new Date(), isTyping: true });
-    convRef.current = [...convRef.current, { role: 'user', content: text }];
+    push({ id: tid, role: 'assistant', content: '', agentType: currentAgent, timestamp: new Date(), isTyping: true });
 
     try {
-      const res = await callClaudeAPI(convRef.current, agent);
-      convRef.current = [...convRef.current, { role: 'assistant', content: res }];
-      setMessages(p => p.map(m => m.id === tid ? { ...m, content: res, isTyping: false } : m));
+      const context = createQueryContext();
+      const response = await postCoreQuery({ ...context, message: text });
+      const agent = detectAgentFromResponse(response);
+      setCurrentAgent(agent);
+      if (response.requiresDocumentInput && response.targetAgent === 'DOCUMENT_REVIEW') {
+        setPendingDocumentContext({
+          queryUid: response.queryUid ?? context.queryUid,
+          traceId: crypto.randomUUID(),
+          conversationUid: context.conversationUid,
+        });
+        setMessages(p => p.map(m => m.id === tid ? {
+          ...m,
+          agentType: 'document',
+          content: response.answer || '검토할 전자결재 문서 본문을 입력해주세요.',
+          isTyping: false,
+          showDocInput: true,
+        } : m));
+        return;
+      }
+      setMessages(p => p.map(m => m.id === tid ? {
+        ...m,
+        agentType: agent,
+        content: response.answer,
+        isTyping: false,
+      } : m));
     } catch {
       setMessages(p => p.map(m => m.id === tid ? { ...m, content: '죄송합니다. 일시적인 오류가 발생했습니다.', isTyping: false } : m));
     } finally {
@@ -103,20 +108,27 @@ export default function ChatPage() {
     push({ id: `check-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
       content: '작성하신 문서를 ○○ 규정 및 공문서 작성 준칙에 따라 정밀 검토 중입니다. 잠시만 기다려 주세요.' });
 
-    const prompt = `다음 공문서를 검토해주세요.\n1. 형식 적합도 점수 (0-100)\n2. 두문/본문/결문 섹션별 상태와 설명\n3. 보완 사항\n4. 수정된 문서 전문 (---수정문서--- 태그 사이에)\n\n문서:\n${docText}`;
-    convRef.current = [...convRef.current, { role: 'user', content: prompt }];
-
     try {
-      const res = await callClaudeAPI(convRef.current, 'document');
-      const scoreMatch    = res.match(/\b(\d{1,3})\b/);
-      const score         = scoreMatch ? parseInt(scoreMatch[1]) : 76;
-      const corrMatch     = res.match(/---수정문서---([\s\S]*?)---수정문서---/);
-      const correctedText = corrMatch ? corrMatch[1].trim() : docText;
-      const feedbackText  = res.replace(/---수정문서---[\s\S]*?---수정문서---/, '').trim();
+      const context = pendingDocumentContext ?? createQueryContext();
+      const response = await postDocumentReview({
+        ...context,
+        message: '전자결재 문서를 검토해줘',
+        document: {
+          title: firstNonEmptyLine(docText) || '전자결재 문서',
+          docType: 'OFFICIAL_DOCUMENT',
+          bodyText: docText,
+        },
+      });
+      const score = Math.round((response.confidence ?? 0.82) * 100);
+      const correctedText = response.revisedDocument?.content?.trim() || docText;
+      const feedbackText = response.reviewMarkdown || response.answer;
+      const findingCount = response.summary?.totalFindingCount ?? response.findings?.length ?? 0;
+      setPendingDocumentContext(null);
+      setMessages(p => p.map(m => m.showDocInput ? { ...m, showDocInput: false } : m));
 
       push({
         id: `result-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-        content: `문서 분석이 완료되었습니다. **${Math.max(1, 5 - Math.floor(score / 20))}건의 보완 사항**이 식별되었습니다.`,
+        content: `문서 분석이 완료되었습니다. **${findingCount}건의 보완 사항**이 식별되었습니다.`,
         reviewScore: score, correctedText, feedbackText,
       });
     } catch {
@@ -127,7 +139,7 @@ export default function ChatPage() {
   };
 
   const handleNewChat = () => {
-    setMessages([]); setCurrentAgent('main'); convRef.current = []; setSidebarOpen(false);
+    setMessages([]); setCurrentAgent('main'); setPendingDocumentContext(null); setSidebarOpen(false);
   };
 
   const AGENT_META: Record<string, { desc: string; scanColor: string }> = {
@@ -435,4 +447,8 @@ export default function ChatPage() {
       </footer>
     </div>
   );
+}
+
+function firstNonEmptyLine(text: string): string {
+  return text.split('\n').map(line => line.trim()).find(Boolean) ?? '';
 }
