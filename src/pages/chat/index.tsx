@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
 import type { Message, AgentType, ChatHistory } from '@/types/chat';
-import { detectAgent, reviewDocument, sendQueryToSpring } from '@/utils/aiService';
+import { reviewDocument, sendQueryToSpring } from '@/utils/aiService';
 import { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
 import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
@@ -60,46 +60,44 @@ export default function ChatPage() {
     setInput('');
     setIsLoading(true);
 
-    const agent = detectAgent(text);
     push({ id: Date.now().toString(), role: 'user', content: text, timestamp: new Date() });
 
-    if (agent !== currentAgent || messages.length === 0) {
-      const discoveryId = `discovery-${Date.now()}`;
-      push({
-        id: discoveryId, role: 'assistant', content: '', agentType: agent,
-        timestamp: new Date(), isAgentDiscovery: true, isSearching: true,
-      });
-      setTimeout(() => {
-        setMessages(p => p.map(m => m.id === discoveryId ? { ...m, isSearching: false } : m));
-      }, 700);
-    }
+    const discoveryId = `discovery-${Date.now()}`;
+    push({
+      id: discoveryId, role: 'assistant', content: '', agentType: currentAgent,
+      timestamp: new Date(), isAgentDiscovery: true, isSearching: true,
+    });
 
-    if (agent === 'document') {
-      setCurrentAgent('document');
-      push({
-        id: `doc-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-        content: `네, 작성하신 문서의 검수를 도와드리겠습니다.\n아래 전용 입력 박스에 전자결재 본문을 붙여넣어 주세요. 표가 HTML로 복사되는 경우 표 구조도 함께 인식합니다.`,
-        showDocInput: true,
-        initialDocText: text.includes('\n') ? text : undefined,
-      });
-      setIsLoading(false);
-      return;
-    }
-
-    setCurrentAgent(agent);
     const tid = `typing-${Date.now()}`;
-    push({ id: tid, role: 'assistant', content: '', agentType: agent, timestamp: new Date(), isTyping: true });
+    push({ id: tid, role: 'assistant', content: '', agentType: currentAgent, timestamp: new Date(), isTyping: true });
 
     try {
       const res = await sendQueryToSpring(text);
-      setMessages(p => p.map(m => m.id === tid ? {
-        ...m,
-        agentType: res.targetAgent.toLowerCase() as AgentType,
-        content: res.answer,
-        isTyping: false,
-      } : m));
+      const agent = res.targetAgent.toLowerCase() as AgentType;
+      setCurrentAgent(agent);
+      setMessages(p => p.map(m => m.id === discoveryId ? { ...m, agentType: agent, isSearching: false } : m));
+
+      if (res.requiresDocumentInput) {
+        setMessages(p => p.map(m => m.id === tid ? {
+          ...m,
+          agentType: agent,
+          content: res.answer || '검토할 전자결재 문서 본문을 입력해주세요.',
+          isTyping: false,
+          showDocInput: true,
+        } : m));
+      } else {
+        setMessages(p => p.map(m => m.id === tid ? {
+          ...m,
+          agentType: agent,
+          content: res.answer,
+          isTyping: false,
+        } : m));
+      }
     } catch {
-      setMessages(p => p.map(m => m.id === tid ? { ...m, content: '죄송합니다. 일시적인 오류가 발생했습니다.', isTyping: false } : m));
+      setMessages(p => p.map(m =>
+        m.id === tid ? { ...m, content: '죄송합니다. 일시적인 오류가 발생했습니다.', isTyping: false } :
+        m.id === discoveryId ? { ...m, isSearching: false } : m
+      ));
     } finally {
       setIsLoading(false);
     }
