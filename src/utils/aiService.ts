@@ -80,6 +80,7 @@ export interface SpringQueryData {
     extractedTables?: DocumentReviewApiResponse['extractedTables'] | null;
     revisedDocument?: DocumentReviewApiResponse['revisedDocument'] | null;
     reviewMarkdown?: string | null;
+    requiresDocumentInput?: boolean | null;
 }
 
 export function detectAgent(query: string): AgentType {
