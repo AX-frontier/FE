@@ -2,22 +2,18 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
 import type { Message, AgentType, ChatHistory } from '@/types/chat';
-import {
-  createQueryContext,
-  detectAgentFromResponse,
-  postCoreQuery,
-  postDocumentReview,
-  type QueryContext,
-} from '@/utils/aiService';
+import { detectAgent, reviewDocument, sendQueryToSpring } from '@/utils/aiService';
 import { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
-import { DocumentInput, ReviewResult } from './components/DocumentReview';
+import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
 
 type DisplayMessage = Message & {
   reviewScore?: number;
   correctedText?: string;
+  correctedHtml?: string | null;
   feedbackText?: string;
   showDocInput?: boolean;
+  initialDocText?: string;
 };
 
 const SUGGESTIONS = [
@@ -35,7 +31,6 @@ export default function ChatPage() {
   const [isLoading, setIsLoading]       = useState(false);
   const [currentAgent, setCurrentAgent] = useState<AgentType>('main');
   const [sidebarOpen, setSidebarOpen]   = useState(false);
-  const [pendingDocumentContext, setPendingDocumentContext] = useState<QueryContext | null>(null);
   const [histories] = useState<ChatHistory[]>([
     { id: '1', title: '올해의 한성대생 철학책 추천', lastMessage: '마흔에 읽는 쇼펜하우어...', timestamp: new Date() },
     { id: '2', title: '장학금 신청 바로가기',       lastMessage: '장학금 신청은 포털에서...',  timestamp: new Date() },
@@ -65,35 +60,42 @@ export default function ChatPage() {
     setInput('');
     setIsLoading(true);
 
+    const agent = detectAgent(text);
     push({ id: Date.now().toString(), role: 'user', content: text, timestamp: new Date() });
 
+    if (agent !== currentAgent || messages.length === 0) {
+      const discoveryId = `discovery-${Date.now()}`;
+      push({
+        id: discoveryId, role: 'assistant', content: '', agentType: agent,
+        timestamp: new Date(), isAgentDiscovery: true, isSearching: true,
+      });
+      setTimeout(() => {
+        setMessages(p => p.map(m => m.id === discoveryId ? { ...m, isSearching: false } : m));
+      }, 700);
+    }
+
+    if (agent === 'document') {
+      setCurrentAgent('document');
+      push({
+        id: `doc-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
+        content: `네, 작성하신 문서의 검수를 도와드리겠습니다.\n아래 전용 입력 박스에 전자결재 본문을 붙여넣어 주세요. 표가 HTML로 복사되는 경우 표 구조도 함께 인식합니다.`,
+        showDocInput: true,
+        initialDocText: text.includes('\n') ? text : undefined,
+      });
+      setIsLoading(false);
+      return;
+    }
+
+    setCurrentAgent(agent);
     const tid = `typing-${Date.now()}`;
-    push({ id: tid, role: 'assistant', content: '', agentType: currentAgent, timestamp: new Date(), isTyping: true });
+    push({ id: tid, role: 'assistant', content: '', agentType: agent, timestamp: new Date(), isTyping: true });
 
     try {
-      const context = createQueryContext();
-      const response = await postCoreQuery({ ...context, message: text });
-      const agent = detectAgentFromResponse(response);
-      setCurrentAgent(agent);
-      if (response.requiresDocumentInput && response.targetAgent === 'DOCUMENT_REVIEW') {
-        setPendingDocumentContext({
-          queryUid: response.queryUid ?? context.queryUid,
-          traceId: crypto.randomUUID(),
-          conversationUid: context.conversationUid,
-        });
-        setMessages(p => p.map(m => m.id === tid ? {
-          ...m,
-          agentType: 'document',
-          content: response.answer || '검토할 전자결재 문서 본문을 입력해주세요.',
-          isTyping: false,
-          showDocInput: true,
-        } : m));
-        return;
-      }
+      const res = await sendQueryToSpring(text);
       setMessages(p => p.map(m => m.id === tid ? {
         ...m,
-        agentType: agent,
-        content: response.answer,
+        agentType: res.targetAgent.toLowerCase() as AgentType,
+        content: res.answer,
         isTyping: false,
       } : m));
     } catch {
@@ -103,33 +105,34 @@ export default function ChatPage() {
     }
   };
 
-  const handleDocSubmit = async (docText: string) => {
+  const handleDocSubmit = async (doc: DocumentSubmitPayload) => {
     setIsLoading(true);
+    setMessages(p => p.map(m => m.showDocInput ? { ...m, showDocInput: false } : m));
     push({ id: `check-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
       content: '작성하신 문서를 ○○ 규정 및 공문서 작성 준칙에 따라 정밀 검토 중입니다. 잠시만 기다려 주세요.' });
 
     try {
-      const context = pendingDocumentContext ?? createQueryContext();
-      const response = await postDocumentReview({
-        ...context,
-        message: '전자결재 문서를 검토해줘',
-        document: {
-          title: firstNonEmptyLine(docText) || '전자결재 문서',
-          docType: 'OFFICIAL_DOCUMENT',
-          bodyText: docText,
-        },
+      const res = await reviewDocument({
+        title: '전자결재 문서',
+        docType: 'OFFICIAL_DOCUMENT',
+        bodyText: doc.text,
+        bodyHtml: doc.html,
+        editorJson: doc.editorJson as Record<string, unknown>,
       });
-      const score = Math.round((response.confidence ?? 0.82) * 100);
-      const correctedText = response.revisedDocument?.content?.trim() || docText;
-      const feedbackText = response.reviewMarkdown || response.answer;
-      const findingCount = response.summary?.totalFindingCount ?? response.findings?.length ?? 0;
-      setPendingDocumentContext(null);
-      setMessages(p => p.map(m => m.showDocInput ? { ...m, showDocInput: false } : m));
+      const findingCount = res.summary.totalFindingCount;
+      const score = Math.max(55, 95 - findingCount * 5 - res.checkRequiredItems.length * 3);
+      const tableSummary = res.extractedTables.length
+        ? `\n\n인식된 표: ${res.extractedTables.length}개\n${res.extractedTables.map(table => `- 표 ${table.index}: ${table.rowCount}행 x ${table.columnCount}열`).join('\n')}`
+        : '\n\n인식된 표: 없음';
+      const feedbackText = `${res.reviewMarkdown}${tableSummary}`;
 
       push({
         id: `result-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-        content: `문서 분석이 완료되었습니다. **${findingCount}건의 보완 사항**이 식별되었습니다.`,
-        reviewScore: score, correctedText, feedbackText,
+        content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**과 **${res.checkRequiredItems.length}건의 확인 항목**이 식별되었습니다.`,
+        reviewScore: score,
+        correctedText: res.revisedDocument.content,
+        correctedHtml: res.revisedDocument.htmlContent,
+        feedbackText,
       });
     } catch {
       push({ id: `err-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(), content: '문서 검토 중 오류가 발생했습니다.' });
@@ -139,7 +142,7 @@ export default function ChatPage() {
   };
 
   const handleNewChat = () => {
-    setMessages([]); setCurrentAgent('main'); setPendingDocumentContext(null); setSidebarOpen(false);
+    setMessages([]); setCurrentAgent('main'); setSidebarOpen(false);
   };
 
   const AGENT_META: Record<string, { desc: string; scanColor: string }> = {
@@ -361,13 +364,18 @@ export default function ChatPage() {
                     )}
                     {/* Doc input widget */}
                     {msg.showDocInput && (
-                      <DocumentInput onSubmit={handleDocSubmit} isLoading={isLoading} />
+                      <DocumentInput
+                        onSubmit={handleDocSubmit}
+                        isLoading={isLoading}
+                        initialText={msg.initialDocText}
+                      />
                     )}
                     {/* Review result */}
                     {msg.reviewScore !== undefined && (
                       <ReviewResult
                         score={msg.reviewScore}
                         correctedText={msg.correctedText ?? ''}
+                        correctedHtml={msg.correctedHtml}
                         feedbackText={msg.feedbackText ?? ''}
                       />
                     )}
@@ -413,6 +421,19 @@ export default function ChatPage() {
                   { Icon: FileCheck, title: '문서 검수' },
                 ].map(({ Icon, title }) => (
                   <button key={title} title={title}
+                    onClick={() => {
+                      if (title === '문서 검수') {
+                        setCurrentAgent('document');
+                        push({
+                          id: `doc-${Date.now()}`,
+                          role: 'assistant',
+                          agentType: 'document',
+                          timestamp: new Date(),
+                          content: '아래 전용 입력 박스에 전자결재 본문을 붙여넣어 주세요.',
+                          showDocInput: true,
+                        });
+                      }
+                    }}
                     style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 6, borderRadius: 5,
                       color: 'var(--text-3)', display: 'flex', alignItems: 'center', transition: 'color 0.12s, background 0.12s' }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg)'; e.currentTarget.style.color = 'var(--text-2)'; }}
@@ -447,8 +468,4 @@ export default function ChatPage() {
       </footer>
     </div>
   );
-}
-
-function firstNonEmptyLine(text: string): string {
-  return text.split('\n').map(line => line.trim()).find(Boolean) ?? '';
 }
