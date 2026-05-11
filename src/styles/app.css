@@ -292,6 +292,75 @@ body {
   align-items: center;
   justify-content: space-between;
 }
+.review-card .ProseMirror {
+  min-height: 190px;
+  outline: none;
+}
+.review-card .ProseMirror p {
+  margin: 0 0 8px;
+}
+.review-card .ProseMirror table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: max-content;
+  max-width: 100%;
+}
+.review-card .ProseMirror th,
+.review-card .ProseMirror td {
+  border: 1px solid var(--border-md);
+  min-width: 72px;
+  padding: 6px 8px;
+  vertical-align: top;
+}
+.review-card .ProseMirror th {
+  background: var(--bg);
+  font-weight: 700;
+}
+.review-markdown h2,
+.review-markdown h3 {
+  margin: 8px 0 10px;
+  color: var(--text-1);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+.review-markdown h2 {
+  font-size: 16px;
+}
+.review-markdown h3 {
+  font-size: 14px;
+  margin-top: 20px;
+}
+.review-markdown p {
+  margin: 4px 0;
+}
+.review-markdown .markdown-list {
+  padding-left: 14px;
+}
+.review-document-preview p {
+  margin: 0 0 10px;
+}
+.review-document-preview br {
+  display: block;
+  content: "";
+  margin-top: 6px;
+}
+.review-document-preview table {
+  border-collapse: collapse;
+  margin: 14px 0;
+  width: auto;
+  max-width: 100%;
+}
+.review-document-preview th,
+.review-document-preview td {
+  border: 1px solid var(--border-md);
+  min-width: 72px;
+  padding: 6px 8px;
+  vertical-align: top;
+}
+.review-document-preview th {
+  background: var(--bg);
+  font-weight: 700;
+}
 
 .section-ok   { color: var(--ok);   background: #ECFDF5; border: 1px solid #A7F3D0; }
 .section-warn { color: var(--warn); background: #FFFBEB; border: 1px solid #FDE68A; }
