@@ -1,5 +1,43 @@
 import type { AgentType } from '@/types/chat';
 
+export type StreamChunk =
+  | { type: 'routing'; targetAgent: string; intent: string }
+  | { type: 'chunk'; text: string }
+  | { type: 'done'; targetAgent?: string; answer?: string; sources?: unknown[]; confidence?: number; fallbackUsed?: boolean; requiresDocumentInput?: boolean; searchKeyword?: string; resultCount?: number; [key: string]: unknown };
+
+export async function* sendQueryToSpringStream(message: string): AsyncGenerator<StreamChunk> {
+  const baseUrl = import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
+  const response = await fetch(`${baseUrl}/query/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      queryUid: crypto.randomUUID(),
+      traceId: crypto.randomUUID(),
+      conversationUid: crypto.randomUUID(),
+      userId: 'local-fe-user',
+      message,
+    }),
+  });
+  if (!response.ok || !response.body) throw new Error(`Stream failed: ${response.status}`);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (line.startsWith('data: ') && line.length > 6) {
+        try { yield JSON.parse(line.slice(6)) as StreamChunk; } catch { /* skip malformed */ }
+      }
+    }
+  }
+}
+
 export interface DocumentReviewPayload {
   title?: string;
   docType?: string;
