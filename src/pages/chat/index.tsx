@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
 import type { Message, AgentType, ChatHistory } from '@/types/chat';
-import { reviewDocument, sendQueryToSpring } from '@/utils/aiService';
+import { reviewDocument, sendQueryToSpringStream } from '@/utils/aiService';
 import { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
 import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
@@ -37,8 +37,9 @@ export default function ChatPage() {
     { id: '3', title: '한성대학교 이번 주 학식',    lastMessage: '이번 주 메뉴는...',          timestamp: new Date() },
   ]);
 
-  const bottomRef   = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const bottomRef      = useRef<HTMLDivElement>(null);
+  const textareaRef    = useRef<HTMLTextAreaElement>(null);
+  const isSendingRef   = useRef(false);
 
   const scrollBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -56,7 +57,8 @@ export default function ChatPage() {
 
   const handleSend = async (override?: string) => {
     const text = (override ?? input).trim();
-    if (!text || isLoading) return;
+    if (!text || isSendingRef.current) return;
+    isSendingRef.current = true;
     setInput('');
     setIsLoading(true);
 
@@ -72,33 +74,54 @@ export default function ChatPage() {
     push({ id: tid, role: 'assistant', content: '', agentType: currentAgent, timestamp: new Date(), isTyping: true });
 
     try {
-      const res = await sendQueryToSpring(text);
-      const agent = res.targetAgent.toLowerCase() as AgentType;
-      setCurrentAgent(agent);
-      setMessages(p => p.map(m => m.id === discoveryId ? { ...m, agentType: agent, isSearching: false } : m));
+      let streamingStarted = false;
+      let resolvedAgent: AgentType = currentAgent;
 
-      if (res.requiresDocumentInput) {
-        setMessages(p => p.map(m => m.id === tid ? {
-          ...m,
-          agentType: agent,
-          content: res.answer || '검토할 전자결재 문서 본문을 입력해주세요.',
-          isTyping: false,
-          showDocInput: true,
-        } : m));
-      } else {
-        setMessages(p => p.map(m => m.id === tid ? {
-          ...m,
-          agentType: agent,
-          content: res.answer,
-          isTyping: false,
-        } : m));
+      for await (const event of sendQueryToSpringStream(text)) {
+        if (event.type === 'routing') {
+          const raw = event.targetAgent.toLowerCase();
+          const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
+          resolvedAgent = agent;
+          setCurrentAgent(agent);
+          setMessages(p => p.map(m =>
+            m.id === discoveryId ? { ...m, agentType: agent, isSearching: false } :
+            m.id === tid         ? { ...m, agentType: agent } : m
+          ));
+        } else if (event.type === 'chunk') {
+          if (!streamingStarted) {
+            streamingStarted = true;
+            setMessages(p => p.map(m => m.id === tid ? { ...m, isTyping: false, content: event.text } : m));
+          } else {
+            setMessages(p => p.map(m => m.id === tid ? { ...m, content: m.content + event.text } : m));
+          }
+        } else if (event.type === 'done') {
+          const raw = (event.targetAgent ?? resolvedAgent).toString().toLowerCase();
+          const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
+          setCurrentAgent(agent);
+          setMessages(p => p.map(m =>
+            m.id === discoveryId ? { ...m, agentType: agent, isSearching: false } : m
+          ));
+          if (event.requiresDocumentInput) {
+            setMessages(p => p.map(m => m.id === tid ? {
+              ...m, agentType: agent, isTyping: false,
+              content: (event.answer as string) || '검토할 전자결재 문서 본문을 입력해주세요.',
+              showDocInput: true,
+            } : m));
+          } else {
+            setMessages(p => p.map(m => m.id === tid ? {
+              ...m, agentType: agent, isTyping: false,
+              content: (event.answer as string) ?? m.content,
+            } : m));
+          }
+        }
       }
     } catch {
       setMessages(p => p.map(m =>
-        m.id === tid ? { ...m, content: '죄송합니다. 일시적인 오류가 발생했습니다.', isTyping: false } :
+        m.id === tid        ? { ...m, content: '죄송합니다. 일시적인 오류가 발생했습니다.', isTyping: false } :
         m.id === discoveryId ? { ...m, isSearching: false } : m
       ));
     } finally {
+      isSendingRef.current = false;
       setIsLoading(false);
     }
   };
