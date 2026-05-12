@@ -31,8 +31,9 @@ export async function* sendQueryToSpringStream(message: string): AsyncGenerator<
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
     for (const line of lines) {
-      if (line.startsWith('data: ') && line.length > 6) {
-        try { yield JSON.parse(line.slice(6)) as StreamChunk; } catch { /* skip malformed */ }
+      if (line.startsWith('data:') && line.length > 5) {
+        const json = line.slice(5).trimStart();
+        try { yield JSON.parse(json) as StreamChunk; } catch { /* skip malformed */ }
       }
     }
   }
