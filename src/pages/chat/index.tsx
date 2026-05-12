@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
 import type { Message, AgentType, ChatHistory } from '@/types/chat';
-import { detectAgent, reviewDocument, sendQueryToSpring } from '@/utils/aiService';
-import  { agentConfig } from '@/components/common/AgentBadge';
+import { reviewDocument, sendQueryToSpringStream } from '@/utils/aiService';
+import { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
 import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
 
@@ -37,9 +37,9 @@ export default function ChatPage() {
     { id: '3', title: '한성대학교 이번 주 학식',    lastMessage: '이번 주 메뉴는...',          timestamp: new Date() },
   ]);
 
-  const bottomRef   = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const convRef     = useRef<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const bottomRef      = useRef<HTMLDivElement>(null);
+  const textareaRef    = useRef<HTMLTextAreaElement>(null);
+  const isSendingRef   = useRef(false);
 
   const scrollBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -57,57 +57,78 @@ export default function ChatPage() {
 
   const handleSend = async (override?: string) => {
     const text = (override ?? input).trim();
-    if (!text || isLoading) return;
+    if (!text || isSendingRef.current) return;
+    isSendingRef.current = true;
     setInput('');
-
-    const agent = detectAgent(text);
-    setCurrentAgent(agent);
+    setIsLoading(true);
 
     push({ id: Date.now().toString(), role: 'user', content: text, timestamp: new Date() });
 
-    if (agent !== currentAgent || messages.length === 0) {
-      const discoveryId = `discovery-${Date.now()}`;
-      push({
-        id: discoveryId, role: 'assistant', content: '', agentType: agent,
-        timestamp: new Date(), isAgentDiscovery: true, isSearching: true,
-      });
-      setTimeout(() => {
-        setMessages(p => p.map(m => m.id === discoveryId ? { ...m, isSearching: false } : m));
-      }, 700);
-    }
-
-    if (agent === 'document') {
-      push({
-        id: `doc-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-        content: `네, 작성하신 문서의 검수를 도와드리겠습니다.\n아래 전용 입력 박스에 전자결재 본문을 붙여넣어 주세요. 표가 HTML로 복사되는 경우 표 구조도 함께 인식합니다.`,
-        showDocInput: true,
-        initialDocText: text.includes('\n') ? text : undefined,
-      });
-      return;
-    }
+    const discoveryId = `discovery-${Date.now()}`;
+    push({
+      id: discoveryId, role: 'assistant', content: '', agentType: currentAgent,
+      timestamp: new Date(), isAgentDiscovery: true, isSearching: true,
+    });
 
     const tid = `typing-${Date.now()}`;
-    push({ id: tid, role: 'assistant', content: '', agentType: agent, timestamp: new Date(), isTyping: true });
-    convRef.current = [...convRef.current, { role: 'user', content: text }];
+    push({ id: tid, role: 'assistant', content: '', agentType: currentAgent, timestamp: new Date(), isTyping: true });
 
     try {
-      const res = await sendQueryToSpring(text);
-      convRef.current = [...convRef.current, { role: 'assistant', content: res.answer }];
-      setMessages(p => p.map(m => m.id === tid ? {
-        ...m,
-        agentType: res.targetAgent.toLowerCase() as AgentType,
-        content: res.answer,
-        isTyping: false,
-      } : m));
+      let streamingStarted = false;
+      let resolvedAgent: AgentType = currentAgent;
+
+      for await (const event of sendQueryToSpringStream(text)) {
+        if (event.type === 'routing') {
+          const raw = event.targetAgent.toLowerCase();
+          const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
+          resolvedAgent = agent;
+          setCurrentAgent(agent);
+          setMessages(p => p.map(m =>
+            m.id === discoveryId ? { ...m, agentType: agent, isSearching: false } :
+            m.id === tid         ? { ...m, agentType: agent } : m
+          ));
+        } else if (event.type === 'chunk') {
+          if (!streamingStarted) {
+            streamingStarted = true;
+            setMessages(p => p.map(m => m.id === tid ? { ...m, isTyping: false, content: event.text } : m));
+          } else {
+            setMessages(p => p.map(m => m.id === tid ? { ...m, content: m.content + event.text } : m));
+          }
+        } else if (event.type === 'done') {
+          const raw = (event.targetAgent ?? resolvedAgent).toString().toLowerCase();
+          const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
+          setCurrentAgent(agent);
+          setMessages(p => p.map(m =>
+            m.id === discoveryId ? { ...m, agentType: agent, isSearching: false } : m
+          ));
+          if (event.requiresDocumentInput) {
+            setMessages(p => p.map(m => m.id === tid ? {
+              ...m, agentType: agent, isTyping: false,
+              content: (event.answer as string) || '검토할 전자결재 문서 본문을 입력해주세요.',
+              showDocInput: true,
+            } : m));
+          } else {
+            setMessages(p => p.map(m => m.id === tid ? {
+              ...m, agentType: agent, isTyping: false,
+              content: (event.answer as string) ?? m.content,
+            } : m));
+          }
+        }
+      }
     } catch {
-      setMessages(p => p.map(m => m.id === tid ? { ...m, content: '죄송합니다. 일시적인 오류가 발생했습니다.', isTyping: false } : m));
+      setMessages(p => p.map(m =>
+        m.id === tid        ? { ...m, content: '죄송합니다. 일시적인 오류가 발생했습니다.', isTyping: false } :
+        m.id === discoveryId ? { ...m, isSearching: false } : m
+      ));
     } finally {
+      isSendingRef.current = false;
       setIsLoading(false);
     }
   };
 
   const handleDocSubmit = async (doc: DocumentSubmitPayload) => {
     setIsLoading(true);
+    setMessages(p => p.map(m => m.showDocInput ? { ...m, showDocInput: false } : m));
     push({ id: `check-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
       content: '작성하신 문서를 ○○ 규정 및 공문서 작성 준칙에 따라 정밀 검토 중입니다. 잠시만 기다려 주세요.' });
 
@@ -142,7 +163,7 @@ export default function ChatPage() {
   };
 
   const handleNewChat = () => {
-    setMessages([]); setCurrentAgent('main'); convRef.current = []; setSidebarOpen(false);
+    setMessages([]); setCurrentAgent('main'); setSidebarOpen(false);
   };
 
   const AGENT_META: Record<string, { desc: string; scanColor: string }> = {
