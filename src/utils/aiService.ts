@@ -1,5 +1,44 @@
 import type { AgentType } from '@/types/chat';
 
+export type StreamChunk =
+  | { type: 'routing'; targetAgent: string; intent: string }
+  | { type: 'chunk'; text: string }
+  | { type: 'done'; targetAgent?: string; answer?: string; sources?: unknown[]; confidence?: number; fallbackUsed?: boolean; requiresDocumentInput?: boolean; searchKeyword?: string; resultCount?: number; [key: string]: unknown };
+
+export async function* sendQueryToSpringStream(message: string): AsyncGenerator<StreamChunk> {
+  const baseUrl = import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
+  const response = await fetch(`${baseUrl}/query/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      queryUid: crypto.randomUUID(),
+      traceId: crypto.randomUUID(),
+      conversationUid: crypto.randomUUID(),
+      userId: 'local-fe-user',
+      message,
+    }),
+  });
+  if (!response.ok || !response.body) throw new Error(`Stream failed: ${response.status}`);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (line.startsWith('data:') && line.length > 5) {
+        const json = line.slice(5).trimStart();
+        try { yield JSON.parse(json) as StreamChunk; } catch { /* skip malformed */ }
+      }
+    }
+  }
+}
+
 export interface DocumentReviewPayload {
   title?: string;
   docType?: string;
@@ -80,21 +119,21 @@ export interface SpringQueryData {
     extractedTables?: DocumentReviewApiResponse['extractedTables'] | null;
     revisedDocument?: DocumentReviewApiResponse['revisedDocument'] | null;
     reviewMarkdown?: string | null;
+    requiresDocumentInput?: boolean | null;
 }
 
 export function detectAgent(query: string): AgentType {
   const libraryKeywords = ['도서관', '학술정보관', '도서', '책', '대출', '반납', '전자책', '학술DB', 'DB', '열람실', '좌석', '연체'];
   const documentKeywords = ['결재', '문서', '기안', '공문', '검토', '피드백', '검수', '본문', '붙임', '수신', '발신'];
 
-  const lower = query.toLowerCase();
-  if (libraryKeywords.some(k => lower.includes(k))) return 'library';
-  if (documentKeywords.some(k => lower.includes(k))) return 'document';
+  if (libraryKeywords.some((kw) => query.includes(kw))) return 'library';
+  if (documentKeywords.some((kw) => query.includes(kw))) return 'document';
   return 'main';
 }
 
 export async function sendQueryToSpring(message: string): Promise<SpringQueryResponse['data']> {
   const baseUrl = import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
-  const response = await fetch(`${baseUrl}/document-review`, {
+  const response = await fetch(`${baseUrl}/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -118,7 +157,7 @@ export async function sendQueryToSpring(message: string): Promise<SpringQueryRes
 }
 
 export function generateChatTitle(query: string): string {
-  return query.length > 20 ? query.substring(0, 20) + '...' : query;
+  return query.length > 20 ? `${query.substring(0, 20)}...` : query;
 }
 
 export async function reviewDocument(payload: DocumentReviewPayload): Promise<DocumentReviewApiResponse> {
