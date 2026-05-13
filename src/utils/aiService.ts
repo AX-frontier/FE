@@ -94,13 +94,6 @@ export interface DocumentReviewApiResponse {
   reviewMarkdown: string;
 }
 
-export interface SpringQueryResponse {
-  success: boolean;
-  code: string;
-  message: string;
-  data: SpringQueryData;
-}
-
 export interface SpringQueryData {
     targetAgent: string;
     intent: string;
@@ -131,38 +124,13 @@ export function detectAgent(query: string): AgentType {
   return 'main';
 }
 
-export async function sendQueryToSpring(message: string): Promise<SpringQueryResponse['data']> {
-  const baseUrl = import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
-  const response = await fetch(`${baseUrl}/query`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      queryUid: crypto.randomUUID(),
-      traceId: crypto.randomUUID(),
-      conversationUid: crypto.randomUUID(),
-      userId: 'local-fe-user',
-      message,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Spring query failed: ${response.status}`);
-  }
-
-  const payload = (await response.json()) as SpringQueryResponse;
-  if (!payload.success) {
-    throw new Error(payload.message);
-  }
-  return payload.data;
-}
-
 export function generateChatTitle(query: string): string {
   return query.length > 20 ? `${query.substring(0, 20)}...` : query;
 }
 
 export async function reviewDocument(payload: DocumentReviewPayload): Promise<DocumentReviewApiResponse> {
   const baseUrl = import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
-  const response = await fetch(`${baseUrl}/query`, {
+  const response = await fetch(`${baseUrl}/query/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -175,38 +143,55 @@ export async function reviewDocument(payload: DocumentReviewPayload): Promise<Do
     }),
   });
 
-  if (!response.ok) {
+  if (!response.ok || !response.body) {
     throw new Error(`Document review failed: ${response.status}`);
   }
 
-  const wrapped = (await response.json()) as SpringQueryResponse;
-  if (!wrapped.success) {
-    throw new Error(wrapped.message);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!line.startsWith('data:') || line.length <= 5) continue;
+      const json = line.slice(5).trimStart();
+      try {
+        const event = JSON.parse(json) as StreamChunk;
+        if (event.type !== 'done') continue;
+        const data = event as typeof event & SpringQueryData;
+        return {
+          targetAgent: 'DOCUMENT_REVIEW',
+          intent: 'DOCUMENT_REVIEW',
+          answer: data.answer ?? '',
+          confidence: data.confidence ?? 0,
+          fallbackUsed: data.fallbackUsed ?? false,
+          fallbackReason: data.fallbackReason,
+          summary: data.summary ?? {
+            overallOpinion: data.answer ?? '',
+            totalFindingCount: 0,
+            highCount: 0,
+            mediumCount: 0,
+            lowCount: 0,
+          },
+          findings: data.findings ?? [],
+          checkRequiredItems: data.checkRequiredItems ?? [],
+          formatNoticeItems: data.formatNoticeItems ?? [],
+          extractedTables: data.extractedTables ?? [],
+          revisedDocument: data.revisedDocument ?? {
+            format: 'plain_text',
+            content: data.answer ?? '',
+            htmlContent: null,
+          },
+          reviewMarkdown: data.reviewMarkdown ?? data.answer ?? '',
+        };
+      } catch { /* skip malformed */ }
+    }
   }
-  const data = wrapped.data;
-  return {
-    targetAgent: 'DOCUMENT_REVIEW',
-    intent: 'DOCUMENT_REVIEW',
-    answer: data.answer,
-    confidence: data.confidence,
-    fallbackUsed: data.fallbackUsed,
-    fallbackReason: data.fallbackReason,
-    summary: data.summary ?? {
-      overallOpinion: data.answer,
-      totalFindingCount: 0,
-      highCount: 0,
-      mediumCount: 0,
-      lowCount: 0,
-    },
-    findings: data.findings ?? [],
-    checkRequiredItems: data.checkRequiredItems ?? [],
-    formatNoticeItems: data.formatNoticeItems ?? [],
-    extractedTables: data.extractedTables ?? [],
-    revisedDocument: data.revisedDocument ?? {
-      format: 'plain_text',
-      content: data.answer,
-      htmlContent: null,
-    },
-    reviewMarkdown: data.reviewMarkdown ?? data.answer,
-  };
+
+  throw new Error('Document review stream ended without done event');
 }
