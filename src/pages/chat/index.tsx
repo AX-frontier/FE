@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
-import type { Message, AgentType, ChatHistory } from '@/types/chat';
-import { reviewDocument, sendQueryToSpringStream } from '@/utils/aiService';
+import type { Message, AgentType, ChatHistory, ConversationDetail } from '@/types/chat';
+import { getConversationDetail, listConversations, reviewDocument, sendQueryToSpringStream } from '@/utils/aiService';
 import { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
 import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
@@ -23,6 +23,70 @@ const SUGGESTIONS = [
   { icon: '💰', label: '장학금 안내',         q: '장학금 신청 방법 알려줘' },
 ];
 
+const ACTIVE_CONVERSATION_KEY = 'hansung-ai.activeConversationUid';
+
+function createConversationUid(): string {
+  return crypto.randomUUID();
+}
+
+function renderMessageHtml(content: string): string {
+  return content
+    .split('\n')
+    .map((line) => {
+      const safe = line
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      if (safe.startsWith('### ')) return `<h3>${safe.slice(4)}</h3>`;
+      if (safe.startsWith('## ')) return `<h2>${safe.slice(3)}</h2>`;
+      if (safe.startsWith('- ')) return `<p>${safe}</p>`;
+      if (!safe.trim()) return '<br />';
+      return `<p>${safe}</p>`;
+    })
+    .join('');
+}
+
+function toHistoryItem(item: {
+  conversationUid: string;
+  title: string;
+  lastMessagePreview: string | null;
+  messageCount: number;
+  updatedAt: string;
+}): ChatHistory {
+  return {
+    id: item.conversationUid,
+    title: item.title || '새 대화',
+    lastMessage: item.lastMessagePreview || '아직 저장된 메시지가 없습니다.',
+    timestamp: new Date(item.updatedAt),
+    messageCount: item.messageCount,
+  };
+}
+
+function toDisplayMessages(detail: ConversationDetail): DisplayMessage[] {
+  let lastAgent: AgentType = 'main';
+  return detail.messages.map((message) => {
+    if (message.role === 'user') {
+      lastAgent = detectAgentFromText(message.content);
+    }
+    return {
+      id: `${message.role}-${message.queryUid}-${message.createdAt}`,
+      role: message.role,
+      content: message.content,
+      timestamp: new Date(message.createdAt),
+      agentType: message.role === 'assistant' ? lastAgent : undefined,
+    };
+  });
+}
+
+function detectAgentFromText(content: string): AgentType {
+  const libraryKeywords = ['도서관', '학술정보관', '도서', '책', '대출', '반납', '열람실'];
+  const documentKeywords = ['결재', '문서', '기안', '공문', '검토', '검수'];
+  if (documentKeywords.some((keyword) => content.includes(keyword))) return 'document';
+  if (libraryKeywords.some((keyword) => content.includes(keyword))) return 'library';
+  return 'main';
+}
+
 export default function ChatPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -31,11 +95,11 @@ export default function ChatPage() {
   const [isLoading, setIsLoading]       = useState(false);
   const [currentAgent, setCurrentAgent] = useState<AgentType>('main');
   const [sidebarOpen, setSidebarOpen]   = useState(false);
-  const [histories] = useState<ChatHistory[]>([
-    { id: '1', title: '올해의 한성대생 철학책 추천', lastMessage: '마흔에 읽는 쇼펜하우어...', timestamp: new Date() },
-    { id: '2', title: '장학금 신청 바로가기',       lastMessage: '장학금 신청은 포털에서...',  timestamp: new Date() },
-    { id: '3', title: '한성대학교 이번 주 학식',    lastMessage: '이번 주 메뉴는...',          timestamp: new Date() },
-  ]);
+  const [histories, setHistories] = useState<ChatHistory[]>([]);
+  const [conversationUid, setConversationUid] = useState(() => {
+    const stored = window.localStorage.getItem(ACTIVE_CONVERSATION_KEY);
+    return stored || createConversationUid();
+  });
 
   const bottomRef      = useRef<HTMLDivElement>(null);
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
@@ -46,6 +110,42 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => { scrollBottom(); }, [messages, scrollBottom]);
+
+  const refreshHistories = useCallback(async () => {
+    try {
+      const items = await listConversations();
+      setHistories(items.map(toHistoryItem));
+    } catch {
+      setHistories([]);
+    }
+  }, []);
+
+  const restoreConversation = useCallback(async (uid: string) => {
+    try {
+      const detail = await getConversationDetail(uid);
+      setConversationUid(detail.conversationUid);
+      window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, detail.conversationUid);
+      const restored = toDisplayMessages(detail);
+      setMessages(restored);
+      const lastUser = [...restored].reverse().find((message) => message.role === 'user');
+      setCurrentAgent(lastUser ? detectAgentFromText(lastUser.content) : 'main');
+    } catch {
+      const nextUid = createConversationUid();
+      setConversationUid(nextUid);
+      window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, nextUid);
+      setMessages([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, conversationUid);
+  }, [conversationUid]);
+
+  useEffect(() => {
+    refreshHistories();
+    const stored = window.localStorage.getItem(ACTIVE_CONVERSATION_KEY);
+    if (stored) restoreConversation(stored);
+  }, [refreshHistories, restoreConversation]);
 
   useEffect(() => {
     const q = location.state?.query as string | undefined;
@@ -77,7 +177,7 @@ export default function ChatPage() {
       let streamingStarted = false;
       let resolvedAgent: AgentType = currentAgent;
 
-      for await (const event of sendQueryToSpringStream(text)) {
+      for await (const event of sendQueryToSpringStream(text, conversationUid)) {
         if (event.type === 'routing') {
           const raw = event.targetAgent.toLowerCase();
           const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
@@ -123,6 +223,7 @@ export default function ChatPage() {
     } finally {
       isSendingRef.current = false;
       setIsLoading(false);
+      refreshHistories();
     }
   };
 
@@ -139,7 +240,7 @@ export default function ChatPage() {
         bodyText: doc.text,
         bodyHtml: doc.html,
         editorJson: doc.editorJson as Record<string, unknown>,
-      });
+      }, conversationUid);
       const findingCount = res.summary.totalFindingCount;
       const score = Math.max(55, 95 - findingCount * 5 - res.checkRequiredItems.length * 3);
       const tableSummary = res.extractedTables.length
@@ -152,18 +253,27 @@ export default function ChatPage() {
         content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**과 **${res.checkRequiredItems.length}건의 확인 항목**이 식별되었습니다.`,
         reviewScore: score,
         correctedText: res.revisedDocument.content,
-        correctedHtml: res.revisedDocument.htmlContent,
+        correctedHtml: res.revisedDocument.htmlContent ?? doc.html,
         feedbackText,
       });
     } catch {
       push({ id: `err-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(), content: '문서 검토 중 오류가 발생했습니다.' });
     } finally {
       setIsLoading(false);
+      refreshHistories();
     }
   };
 
   const handleNewChat = () => {
+    const nextUid = createConversationUid();
+    setConversationUid(nextUid);
+    window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, nextUid);
     setMessages([]); setCurrentAgent('main'); setSidebarOpen(false);
+  };
+
+  const handleSelectHistory = async (id: string) => {
+    setSidebarOpen(false);
+    await restoreConversation(id);
   };
 
   const AGENT_META: Record<string, { desc: string; scanColor: string }> = {
@@ -218,7 +328,7 @@ export default function ChatPage() {
 
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)}
         histories={histories}
-        onSelectHistory={id => { console.log('select', id); setSidebarOpen(false); }}
+        onSelectHistory={handleSelectHistory}
         onNewChat={handleNewChat}
       />
 
@@ -375,11 +485,7 @@ export default function ChatPage() {
                             <span className="dot" /><span className="dot" /><span className="dot" />
                           </div>
                         ) : (
-                          <div style={{ whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{
-                            __html: msg.content
-                              .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                              .replace(/\n/g, '<br/>'),
-                          }} />
+                          <div className="chat-markdown" dangerouslySetInnerHTML={{ __html: renderMessageHtml(msg.content) }} />
                         )}
                       </div>
                     )}
