@@ -1,20 +1,50 @@
-import type { AgentType } from '@/types/chat';
+import type { AgentType, ConversationDetail, ConversationListItem } from '@/types/chat';
+
+const DEFAULT_USER_ID = 'local-fe-user';
+
+interface ApiResponse<T> {
+  success: boolean;
+  code: string;
+  message: string;
+  data: T;
+}
+
+function getBaseUrl(): string {
+  return import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
+}
+
+async function fetchApiData<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${getBaseUrl()}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  const payload = (await response.json()) as ApiResponse<T>;
+  if (!payload.success) throw new Error(payload.message || 'Request failed');
+  return payload.data;
+}
+
+export function getLocalUserId(): string {
+  return import.meta.env.VITE_LOCAL_USER_ID ?? DEFAULT_USER_ID;
+}
 
 export type StreamChunk =
   | { type: 'routing'; targetAgent: string; intent: string }
   | { type: 'chunk'; text: string }
   | { type: 'done'; targetAgent?: string; answer?: string; sources?: unknown[]; confidence?: number; fallbackUsed?: boolean; requiresDocumentInput?: boolean; searchKeyword?: string; resultCount?: number; [key: string]: unknown };
 
-export async function* sendQueryToSpringStream(message: string): AsyncGenerator<StreamChunk> {
-  const baseUrl = import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
-  const response = await fetch(`${baseUrl}/query/stream`, {
+export async function* sendQueryToSpringStream(message: string, conversationUid: string): AsyncGenerator<StreamChunk> {
+  const response = await fetch(`${getBaseUrl()}/query/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       queryUid: crypto.randomUUID(),
       traceId: crypto.randomUUID(),
-      conversationUid: crypto.randomUUID(),
-      userId: 'local-fe-user',
+      conversationUid,
+      userId: getLocalUserId(),
       message,
     }),
   });
@@ -37,6 +67,20 @@ export async function* sendQueryToSpringStream(message: string): AsyncGenerator<
       }
     }
   }
+}
+
+export async function listConversations(page = 0, size = 20): Promise<ConversationListItem[]> {
+  const params = new URLSearchParams({
+    userId: getLocalUserId(),
+    page: String(page),
+    size: String(size),
+  });
+  return fetchApiData<ConversationListItem[]>(`/api/conversations?${params.toString()}`);
+}
+
+export async function getConversationDetail(conversationUid: string): Promise<ConversationDetail> {
+  const params = new URLSearchParams({ userId: getLocalUserId() });
+  return fetchApiData<ConversationDetail>(`/api/conversations/${conversationUid}?${params.toString()}`);
 }
 
 export interface DocumentReviewPayload {
@@ -128,16 +172,15 @@ export function generateChatTitle(query: string): string {
   return query.length > 20 ? `${query.substring(0, 20)}...` : query;
 }
 
-export async function reviewDocument(payload: DocumentReviewPayload): Promise<DocumentReviewApiResponse> {
-  const baseUrl = import.meta.env.VITE_BE_SERVER_BASE_URL ?? 'http://localhost:8080';
-  const response = await fetch(`${baseUrl}/query/stream`, {
+export async function reviewDocument(payload: DocumentReviewPayload, conversationUid: string): Promise<DocumentReviewApiResponse> {
+  const response = await fetch(`${getBaseUrl()}/query/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       queryUid: crypto.randomUUID(),
       traceId: crypto.randomUUID(),
-      conversationUid: crypto.randomUUID(),
-      userId: 'local-fe-user',
+      conversationUid,
+      userId: getLocalUserId(),
       message: '전자결재 문서를 검토해줘',
       document: payload,
     }),
