@@ -11,6 +11,7 @@ type DisplayMessage = Message & {
   reviewScore?: number;
   correctedText?: string;
   correctedHtml?: string | null;
+  copyNotice?: string | null;
   feedbackText?: string;
   showDocInput?: boolean;
   initialDocText?: string;
@@ -85,6 +86,11 @@ function detectAgentFromText(content: string): AgentType {
   if (documentKeywords.some((keyword) => content.includes(keyword))) return 'document';
   if (libraryKeywords.some((keyword) => content.includes(keyword))) return 'library';
   return 'main';
+}
+
+function containsHtmlTable(html?: string | null): boolean {
+  if (!html) return false;
+  return new DOMParser().parseFromString(html, 'text/html').querySelector('table') !== null;
 }
 
 export default function ChatPage() {
@@ -253,7 +259,10 @@ export default function ChatPage() {
         content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**과 **${res.checkRequiredItems.length}건의 확인 항목**이 식별되었습니다.`,
         reviewScore: score,
         correctedText: res.revisedDocument.content,
-        correctedHtml: res.revisedDocument.htmlContent ?? doc.html,
+        correctedHtml: res.revisedDocument.htmlContent,
+        copyNotice: containsHtmlTable(doc.html) && !containsHtmlTable(res.revisedDocument.htmlContent)
+          ? '원문에는 표가 있었지만 수정 결과 HTML에는 표 구조가 포함되지 않았습니다. 복사 시 수정 텍스트 기준으로 반영되며, 표 구조 보존은 서버 수정 HTML이 표를 유지할 때만 가능합니다.'
+          : null,
         feedbackText,
       });
     } catch {
@@ -503,6 +512,7 @@ export default function ChatPage() {
                         score={msg.reviewScore}
                         correctedText={msg.correctedText ?? ''}
                         correctedHtml={msg.correctedHtml}
+                        copyNotice={msg.copyNotice}
                         feedbackText={msg.feedbackText ?? ''}
                       />
                     )}
