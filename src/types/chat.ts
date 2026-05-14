@@ -40,4 +40,28 @@ export interface ChatHistory {
   title: string;
   lastMessage: string;
   timestamp: Date;
+  messageCount?: number;
+}
+
+export interface ConversationListItem {
+  conversationUid: string;
+  title: string;
+  lastMessagePreview: string | null;
+  messageCount: number;
+  updatedAt: string;
+}
+
+export interface ConversationMessage {
+  role: 'user' | 'assistant';
+  queryUid: string;
+  content: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ConversationDetail {
+  conversationUid: string;
+  title: string;
+  createdAt: string;
+  messages: ConversationMessage[];
 }
