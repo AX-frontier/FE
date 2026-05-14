@@ -115,8 +115,10 @@ export default function ChatPage() {
     try {
       const items = await listConversations();
       setHistories(items.map(toHistoryItem));
+      return items;
     } catch {
       setHistories([]);
+      return null;
     }
   }, []);
 
@@ -142,10 +144,32 @@ export default function ChatPage() {
   }, [conversationUid]);
 
   useEffect(() => {
-    refreshHistories();
-    const stored = window.localStorage.getItem(ACTIVE_CONVERSATION_KEY);
-    if (stored) restoreConversation(stored);
-  }, [refreshHistories, restoreConversation]);
+    let cancelled = false;
+    async function loadInitialConversation() {
+      let items;
+      try {
+        items = await listConversations();
+      } catch {
+        if (!cancelled) setHistories([]);
+        return;
+      }
+      if (cancelled) return;
+
+      setHistories(items.map(toHistoryItem));
+      const stored = window.localStorage.getItem(ACTIVE_CONVERSATION_KEY);
+      if (!stored) return;
+
+      if (items.some((item) => item.conversationUid === stored)) {
+        await restoreConversation(stored);
+        return;
+      }
+      window.localStorage.removeItem(ACTIVE_CONVERSATION_KEY);
+    }
+    loadInitialConversation();
+    return () => {
+      cancelled = true;
+    };
+  }, [restoreConversation]);
 
   useEffect(() => {
     const q = location.state?.query as string | undefined;
