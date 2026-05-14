@@ -54,6 +54,49 @@ function renderMarkdown(markdown: string): string {
     .join('');
 }
 
+function sanitizeClipboardDocument(doc: Document): void {
+  doc.querySelectorAll('script, iframe, object, embed, link').forEach((node) => node.remove());
+  doc.querySelectorAll<HTMLElement>('*').forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (name.startsWith('on') || value.startsWith('javascript:')) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+}
+
+function normalizeHtmlForClipboard(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  sanitizeClipboardDocument(doc);
+  doc.querySelectorAll('table').forEach((table) => {
+    table.setAttribute('border', table.getAttribute('border') || '1');
+    table.setAttribute('cellspacing', table.getAttribute('cellspacing') || '0');
+    table.setAttribute('cellpadding', table.getAttribute('cellpadding') || '4');
+    table.setAttribute(
+      'style',
+      [
+        table.getAttribute('style') ?? '',
+        'border-collapse:collapse',
+      ].filter(Boolean).join(';')
+    );
+  });
+  doc.querySelectorAll('th,td').forEach((cell) => {
+    cell.setAttribute(
+      'style',
+      [
+        cell.getAttribute('style') ?? '',
+        'border:1px solid #000000',
+        'padding:4px 8px',
+        'vertical-align:top',
+        'white-space:pre-wrap',
+      ].filter(Boolean).join(';')
+    );
+  });
+  return `<!doctype html><html><head><meta charset="utf-8">${doc.head.innerHTML}</head><body>${doc.body.innerHTML}</body></html>`;
+}
+
 export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) {
   const [textLength, setTextLength] = useState(0);
   const [tableCount, setTableCount] = useState(0);
@@ -148,27 +191,36 @@ interface ResultProps {
   correctedText: string;
   feedbackText: string;
   correctedHtml?: string | null;
+  copyNotice?: string | null;
 }
 
-export function ReviewResult({ score, correctedText, feedbackText, correctedHtml }: ResultProps) {
+export function ReviewResult({ score, correctedText, feedbackText, correctedHtml, copyNotice }: ResultProps) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
 
   const color = score >= 80 ? 'var(--ok)' : score >= 60 ? 'var(--warn)' : 'var(--err)';
   const label = score >= 80 ? '양호' : score >= 60 ? '보완 필요' : '수정 필요';
 
   const handleCopy = async () => {
-    if (correctedHtml && 'ClipboardItem' in window) {
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          'text/html': new Blob([correctedHtml], { type: 'text/html' }),
-          'text/plain': new Blob([correctedText], { type: 'text/plain' }),
-        }),
-      ]);
-    } else {
-      await navigator.clipboard.writeText(correctedText);
+    try {
+      if (correctedHtml && 'ClipboardItem' in window) {
+        const clipboardHtml = normalizeHtmlForClipboard(correctedHtml);
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([clipboardHtml], { type: 'text/html' }),
+            'text/plain': new Blob([correctedText], { type: 'text/plain' }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(correctedText);
+      }
+      setCopyError(null);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+      setCopyError('복사 권한이 없거나 브라우저에서 HTML 복사를 지원하지 않습니다. 본문을 직접 선택해 복사해 주세요.');
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   // Parse sections from feedbackText heuristically
@@ -259,6 +311,11 @@ export function ReviewResult({ score, correctedText, feedbackText, correctedHtml
           ) : (
             <div style={{ padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
               {correctedText}
+            </div>
+          )}
+          {(copyNotice || copyError) && (
+            <div style={{ padding: '8px 14px 12px', fontSize: 11, lineHeight: 1.5, color: copyError ? 'var(--err)' : 'var(--text-3)' }}>
+              {copyError ?? copyNotice}
             </div>
           )}
         </div>
