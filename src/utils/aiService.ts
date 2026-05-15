@@ -54,6 +54,16 @@ export async function* sendQueryToSpringStream(message: string, conversationUid:
   const decoder = new TextDecoder();
   let buffer = '';
 
+  const parseEventLine = (line: string): StreamChunk | null => {
+    if (!line.startsWith('data:') || line.length <= 5) return null;
+    const json = line.slice(5).trimStart();
+    try {
+      return JSON.parse(json) as StreamChunk;
+    } catch {
+      return null;
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -61,12 +71,13 @@ export async function* sendQueryToSpringStream(message: string, conversationUid:
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
     for (const line of lines) {
-      if (line.startsWith('data:') && line.length > 5) {
-        const json = line.slice(5).trimStart();
-        try { yield JSON.parse(json) as StreamChunk; } catch { /* skip malformed */ }
-      }
+      const event = parseEventLine(line);
+      if (event) yield event;
     }
   }
+
+  const finalEvent = parseEventLine(buffer.trim());
+  if (finalEvent) yield finalEvent;
 }
 
 export async function listConversations(page = 0, size = 20): Promise<ConversationListItem[]> {
@@ -130,6 +141,18 @@ export interface DocumentReviewApiResponse {
     columnCount: number;
     rows: string[][];
   }>;
+  tableChecks: Array<{
+    id: string;
+    tableIndex: number;
+    tableTitle: string;
+    category: string;
+    severity: 'HIGH' | 'MEDIUM' | 'LOW';
+    status: 'SUITABLE' | 'REVISION_REQUIRED' | 'CHECK_REQUIRED' | 'NOT_APPLICABLE';
+    message: string;
+    suggestion: string;
+    evidence: Record<string, unknown>;
+  }>;
+  tableChecksAvailable: boolean;
   revisedDocument: {
     format: 'plain_text';
     content: string;
@@ -154,9 +177,32 @@ export interface SpringQueryData {
     checkRequiredItems?: DocumentReviewApiResponse['checkRequiredItems'] | null;
     formatNoticeItems?: DocumentReviewApiResponse['formatNoticeItems'] | null;
     extractedTables?: DocumentReviewApiResponse['extractedTables'] | null;
+    tableChecks?: DocumentReviewApiResponse['tableChecks'] | null;
+    tableChecksAvailable?: boolean | null;
     revisedDocument?: DocumentReviewApiResponse['revisedDocument'] | null;
     reviewMarkdown?: string | null;
-    requiresDocumentInput?: boolean | null;
+	    requiresDocumentInput?: boolean | null;
+	}
+
+export function normalizeTableChecks(value: SpringQueryData['tableChecks']): DocumentReviewApiResponse['tableChecks'] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is NonNullable<SpringQueryData['tableChecks']>[number] => Boolean(item))
+    .map((item, index) => ({
+      id: item.id || `table-check-${index + 1}`,
+      tableIndex: Number(item.tableIndex) || 0,
+      tableTitle: item.tableTitle || '표 검토',
+      category: item.category || '표 검토',
+      severity: item.severity === 'HIGH' || item.severity === 'MEDIUM' || item.severity === 'LOW'
+        ? item.severity
+        : 'MEDIUM',
+      status: item.status === 'SUITABLE' || item.status === 'REVISION_REQUIRED' || item.status === 'CHECK_REQUIRED' || item.status === 'NOT_APPLICABLE'
+        ? item.status
+        : 'CHECK_REQUIRED',
+      message: item.message || '표 검토 내용을 확인해 주세요.',
+      suggestion: item.suggestion || '원본 표에서 직접 확인해 주세요.',
+      evidence: item.evidence ?? {},
+    }));
 }
 
 export function detectAgent(query: string): AgentType {
@@ -225,6 +271,8 @@ export async function reviewDocument(payload: DocumentReviewPayload, conversatio
           checkRequiredItems: data.checkRequiredItems ?? [],
           formatNoticeItems: data.formatNoticeItems ?? [],
           extractedTables: data.extractedTables ?? [],
+          tableChecks: normalizeTableChecks(data.tableChecks),
+          tableChecksAvailable: data.tableChecksAvailable ?? false,
           revisedDocument: data.revisedDocument ?? {
             format: 'plain_text',
             content: data.answer ?? '',
