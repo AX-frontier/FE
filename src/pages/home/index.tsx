@@ -1,12 +1,15 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, ChevronLeft, ChevronRight, X,
   Mail, Globe, BookOpen, Briefcase, FileCheck, Megaphone,
   MonitorPlay, GraduationCap, Gift, Building2, CalendarDays, FlaskConical,
-  ExternalLink,
+  ExternalLink, Menu,
   type LucideIcon,
 } from 'lucide-react';
+import Sidebar from '@/components/common/Sidebar';
+import type { ChatHistory } from '@/types/chat';
+import { listConversations } from '@/utils/aiService';
 
 function DotsGrid({ size = 18 }: { size?: number }) {
   const r = size * 0.09;
@@ -75,6 +78,23 @@ const NEWS = [
 
 const PER_PAGE = 6;
 const PAGES = Math.ceil(MENUS.length / PER_PAGE);
+const ACTIVE_CONVERSATION_KEY = 'hansung-ai.activeConversationUid';
+
+function toHistoryItem(item: {
+  conversationUid: string;
+  title: string;
+  lastMessagePreview: string | null;
+  messageCount: number;
+  updatedAt: string;
+}): ChatHistory {
+  return {
+    id: item.conversationUid,
+    title: item.title || '새 대화',
+    lastMessage: item.lastMessagePreview || '아직 저장된 메시지가 없습니다.',
+    timestamp: new Date(item.updatedAt),
+    messageCount: item.messageCount,
+  };
+}
 
 export default function HomePage() {
   const navigate = useNavigate();
@@ -82,11 +102,46 @@ export default function HomePage() {
   const [page, setPage]       = useState(0);
   const [showGrid, setGrid]   = useState(false);
   const [newsIdx, setNewsIdx] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(() => (
+    window.matchMedia('(min-width: 1024px)').matches
+  ));
+  const [histories, setHistories] = useState<ChatHistory[]>([]);
+  const [activeConversationUid, setActiveConversationUid] = useState<string | undefined>(() => (
+    window.localStorage.getItem(ACTIVE_CONVERSATION_KEY) ?? undefined
+  ));
   const inputRef              = useRef<HTMLInputElement>(null);
 
   const go = (text?: string) => {
     const s = (text ?? q).trim();
-    if (s) navigate('/chat', { state: { query: s } });
+    if (s) navigate('/chat', { state: { query: s, newConversation: true } });
+  };
+
+  const refreshHistories = useCallback(async () => {
+    try {
+      const items = await listConversations();
+      setHistories(items.map(toHistoryItem));
+    } catch {
+      setHistories([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshHistories();
+  }, [refreshHistories]);
+
+  const handleSelectHistory = (id: string) => {
+    window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, id);
+    setActiveConversationUid(id);
+    setSidebarOpen(false);
+    navigate('/chat', { state: { conversationUid: id } });
+  };
+
+  const handleNewChat = () => {
+    const nextUid = crypto.randomUUID();
+    window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, nextUid);
+    setActiveConversationUid(nextUid);
+    setSidebarOpen(false);
+    navigate('/chat', { state: { conversationUid: nextUid, newConversation: true } });
   };
 
   // Auto-advance news slideshow
@@ -102,7 +157,7 @@ export default function HomePage() {
   const news  = NEWS[newsIdx];
 
   return (
-    <div style={{ height: '100vh', overflow: 'hidden', position: 'relative', background: '#000' }}>
+    <div className={`home-page-shell ${sidebarOpen ? 'home-sidebar-open' : 'home-sidebar-closed'}`} style={{ height: '100vh', overflow: 'hidden', position: 'relative', background: '#000' }}>
 
       {/* ── Video background ── */}
       <video
@@ -133,6 +188,13 @@ export default function HomePage() {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <button
+              onClick={() => setSidebarOpen(open => !open)}
+              className="home-history-button"
+              aria-label={sidebarOpen ? '대화 기록 닫기' : '대화 기록 열기'}
+            >
+              <Menu size={18} />
+            </button>
             <span className="header-hsu" style={{ fontWeight: 900, fontSize: 42, letterSpacing: '-0.05em' }}>HSU</span>
             <div className="header-divider" style={{ paddingLeft: 16 }}>
               <div className="header-name" style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.3 }}>한성대학교</div>
@@ -153,8 +215,17 @@ export default function HomePage() {
         </div>
       </header>
 
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        histories={histories}
+        onSelectHistory={handleSelectHistory}
+        onNewChat={handleNewChat}
+        activeId={activeConversationUid}
+      />
+
       {/* ── Main content (centered column) ── */}
-      <div style={{
+      <div className="home-content" style={{
         position: 'absolute', inset: 0, zIndex: 2,
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         paddingTop: 100,

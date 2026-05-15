@@ -17,7 +17,7 @@ export default function Header({ showSearch = true, searchQuery = '', onSearchCh
     e.preventDefault();
     if (localQuery.trim()) {
       onSearchSubmit?.(localQuery.trim());
-      navigate('/chat', { state: { query: localQuery.trim() } });
+      navigate('/chat', { state: { query: localQuery.trim(), newConversation: true } });
     }
   };
 

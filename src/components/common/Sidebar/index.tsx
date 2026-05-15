@@ -7,69 +7,67 @@ interface Props {
   histories: ChatHistory[];
   onSelectHistory: (id: string) => void;
   onNewChat: () => void;
+  activeId?: string;
 }
 
-export default function Sidebar({ isOpen, onClose, histories, onSelectHistory, onNewChat }: Props) {
+function formatHistoryTime(date: Date): string {
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round((startToday - startDate) / 86400000);
+  if (dayDiff === 0) return '오늘';
+  if (dayDiff === 1) return '어제';
+  if (dayDiff < 7) return `${dayDiff}일 전`;
+  return `${date.getMonth() + 1}.${date.getDate()}`;
+}
+
+export default function Sidebar({ isOpen, onClose, histories, onSelectHistory, onNewChat, activeId }: Props) {
   return (
     <>
       {isOpen && <div className="sidebar-overlay" onClick={onClose} />}
 
       <aside className={`sidebar ${isOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
-        <div style={{ padding: '16px 16px 8px' }}>
-          {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '0.07em', textTransform: 'uppercase' }}>
-              대화 기록
-            </span>
-            <button onClick={onClose} style={{
-              border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-3)',
-              padding: 4, borderRadius: 4, display: 'flex', alignItems: 'center',
-              transition: 'color 0.12s',
-            }}
-              onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-1)')}
-              onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-3)')}
-            >
+        <div className="sidebar-head">
+          <div className="sidebar-title-row">
+            <div>
+              <span className="sidebar-kicker">대화 기록</span>
+              <p className="sidebar-subtitle">최근 세션을 바로 이어서 볼 수 있어요</p>
+            </div>
+            <button onClick={onClose} className="sidebar-close" aria-label="대화 목록 닫기">
               <X size={15} />
             </button>
           </div>
 
-          {/* New chat */}
-          <button onClick={onNewChat} className="btn-ghost" style={{
-            width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-            padding: '8px 12px', borderRadius: 8, fontSize: 13, fontFamily: 'inherit',
-            fontWeight: 500, marginBottom: 12, color: 'var(--blue)',
-            borderColor: 'var(--blue-tint)', background: 'var(--blue-tint)',
-          }}>
+          <button onClick={onNewChat} className="sidebar-new-chat">
             <Plus size={14} />
             새 대화 시작
           </button>
         </div>
 
-        {/* List */}
-        <div style={{ padding: '0 8px 16px' }}>
+        <div className="sidebar-list">
           {histories.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '32px 0' }}>
+            <div className="sidebar-empty">
               <MessageSquare size={28} color="var(--border-md)" style={{ margin: '0 auto 8px' }} />
-              <p style={{ fontSize: 12, color: 'var(--text-3)' }}>아직 대화 기록이 없어요</p>
+              <p>아직 대화 기록이 없어요</p>
             </div>
           ) : histories.map(h => (
-            <button key={h.id} onClick={() => onSelectHistory(h.id)}
-              style={{
-                width: '100%', textAlign: 'left', border: 'none', background: 'none',
-                cursor: 'pointer', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 8,
-                transition: 'background 0.12s', fontFamily: 'inherit',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+            <button
+              key={h.id}
+              onClick={() => onSelectHistory(h.id)}
+              className={`sidebar-history-item ${activeId === h.id ? 'active' : ''}`}
             >
-              <Clock size={12} color="var(--text-3)" style={{ marginTop: 3, flexShrink: 0 }} />
-              <div style={{ minWidth: 0 }}>
-                <p style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {h.title}
-                </p>
-                <p style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
-                  {h.lastMessage}
-                </p>
+              <div className="sidebar-history-icon">
+                <Clock size={13} />
+              </div>
+              <div className="sidebar-history-body">
+                <div className="sidebar-history-top">
+                  <p className="sidebar-history-title">{h.title}</p>
+                  <span>{formatHistoryTime(h.timestamp)}</span>
+                </div>
+                <p className="sidebar-history-preview">{h.lastMessage}</p>
+                {h.messageCount !== undefined && (
+                  <span className="sidebar-history-count">{h.messageCount} messages</span>
+                )}
               </div>
             </button>
           ))}
