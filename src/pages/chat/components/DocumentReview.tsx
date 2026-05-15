@@ -38,6 +38,10 @@ interface PasteDiagnostics {
   hasBorder: boolean;
 }
 
+function tablePlaceholder(index: number): string {
+  return `[표 ${index + 1}: 표 내용은 원본 전자결재/HWP 표에서 직접 확인·반영해 주세요.]`;
+}
+
 const BLOCK_TEXT_TAGS = new Set([
   'address',
   'article',
@@ -229,7 +233,7 @@ function stripTablesForBodyCopy(html: string): string {
   sanitizeClipboardDocument(doc);
   doc.querySelectorAll('table').forEach((table, index) => {
     const placeholder = doc.createElement('p');
-    placeholder.textContent = `[표 ${index + 1}: 표 내용은 아래 표 검토 결과를 참고해 원본 전자결재/HWP 표에 직접 반영해 주세요.]`;
+    placeholder.textContent = tablePlaceholder(index);
     table.replaceWith(placeholder);
   });
   return doc.body.innerHTML;
@@ -433,18 +437,22 @@ export function ReviewResult({
 
   const handleCopy = async () => {
     try {
+      const copyHtml = stripTablesOnCopy
+        ? stripTablesForBodyCopy(correctedHtml ?? '')
+        : correctedHtml;
+      const copyText = stripTablesOnCopy
+        ? htmlToText(copyHtml || `<p>${tablePlaceholder(0)}</p>`)
+        : correctedText;
       if (correctedHtml && 'ClipboardItem' in window) {
-        const bodyHtml = stripTablesOnCopy ? stripTablesForBodyCopy(correctedHtml) : correctedHtml;
-        const clipboardHtml = normalizeHtmlForClipboard(bodyHtml);
-        const plainText = stripTablesOnCopy ? htmlToText(bodyHtml) : correctedText;
+        const clipboardHtml = normalizeHtmlForClipboard(copyHtml || `<p>${tablePlaceholder(0)}</p>`);
         await navigator.clipboard.write([
           new ClipboardItem({
             'text/html': new Blob([clipboardHtml], { type: 'text/html' }),
-            'text/plain': new Blob([plainText], { type: 'text/plain' }),
+            'text/plain': new Blob([copyText], { type: 'text/plain' }),
           }),
         ]);
       } else {
-        await navigator.clipboard.writeText(correctedText);
+        await navigator.clipboard.writeText(copyText);
       }
       setCopyError(null);
       setCopied(true);
@@ -467,6 +475,7 @@ export function ReviewResult({
     if (s === '보완') return 'section-warn';
     return 'section-err';
   };
+  const copyButtonLabel = copied ? '복사됨' : stripTablesOnCopy ? '표 제외 본문 복사' : '본문 복사';
 
   return (
     <div className="anim-fade-up" style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
@@ -566,7 +575,7 @@ export function ReviewResult({
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-1)' }}>검토 전후 비교</span>
             <div style={{ display: 'flex', gap: 4 }}>
               {[
-                { icon: <Copy size={12} />, label: copied ? '복사됨' : '본문 복사', onClick: handleCopy },
+                { icon: <Copy size={12} />, label: copyButtonLabel, onClick: handleCopy },
                 { icon: <Download size={12} />, label: 'hwp 다운', onClick: () => {} },
                 { icon: <Download size={12} />, label: 'PDF 다운', onClick: () => {} },
               ].map(btn => (
