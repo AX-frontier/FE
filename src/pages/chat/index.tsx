@@ -2,16 +2,22 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
 import type { Message, AgentType, ChatHistory, ConversationDetail } from '@/types/chat';
-import { getConversationDetail, listConversations, reviewDocument, sendQueryToSpringStream } from '@/utils/aiService';
+import { getConversationDetail, listConversations, normalizeTableChecks, reviewDocument, sendQueryToSpringStream } from '@/utils/aiService';
+import type { DocumentReviewApiResponse } from '@/utils/aiService';
 import { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
 import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
 
 type DisplayMessage = Message & {
   reviewScore?: number;
+  originalText?: string;
+  originalHtml?: string | null;
   correctedText?: string;
   correctedHtml?: string | null;
   copyNotice?: string | null;
+  tableChecks?: DocumentReviewApiResponse['tableChecks'];
+  tableChecksAvailable?: boolean;
+  stripTablesOnCopy?: boolean;
   feedbackText?: string;
   showDocInput?: boolean;
   initialDocText?: string;
@@ -30,15 +36,54 @@ function createConversationUid(): string {
   return crypto.randomUUID();
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function safeHref(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function renderInlineMarkdown(value: string): string {
+  const linkPlaceholders: string[] = [];
+  const withLinkPlaceholders = value.replace(/\[([^\]]+)]\((https?:\/\/[^\s)]+)\)/g, (match, label: string, url: string) => {
+    const href = safeHref(url);
+    if (!href) return match;
+    const index = linkPlaceholders.length;
+    linkPlaceholders.push(
+      `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
+    );
+    return `__LINK_${index}__`;
+  });
+
+  let safe = escapeHtml(withLinkPlaceholders)
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (match, prefix: string, url: string) => {
+      const href = safeHref(url);
+      if (!href) return match;
+      return `${prefix}<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+    });
+
+  linkPlaceholders.forEach((link, index) => {
+    safe = safe.replace(`__LINK_${index}__`, link);
+  });
+  return safe;
+}
+
 function renderMessageHtml(content: string): string {
   return content
     .split('\n')
     .map((line) => {
-      const safe = line
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      const safe = renderInlineMarkdown(line);
       if (safe.startsWith('### ')) return `<h3>${safe.slice(4)}</h3>`;
       if (safe.startsWith('## ')) return `<h2>${safe.slice(3)}</h2>`;
       if (safe.startsWith('- ')) return `<p>${safe}</p>`;
@@ -64,16 +109,134 @@ function toHistoryItem(item: {
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function asArray<T = unknown>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
+function asBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function documentReviewFromMetadata(metadata?: Record<string, unknown>): (Partial<DocumentReviewApiResponse> & {
+  originalText?: string;
+  originalHtml?: string | null;
+}) | null {
+  const direct = asRecord(metadata?.documentReview);
+  const nestedSources = asRecord(metadata?.sources);
+  const review = direct ?? asRecord(nestedSources?.documentReview);
+  if (!review) return null;
+
+  const summary = asRecord(review.summary);
+  const revisedDocument = asRecord(review.revisedDocument);
+  const findings = asArray<DocumentReviewApiResponse['findings'][number]>(review.findings);
+  const checkRequiredItems = asArray<DocumentReviewApiResponse['checkRequiredItems'][number]>(review.checkRequiredItems);
+  const formatNoticeItems = asArray<DocumentReviewApiResponse['formatNoticeItems'][number]>(review.formatNoticeItems);
+  const extractedTables = asArray<DocumentReviewApiResponse['extractedTables'][number]>(review.extractedTables);
+  const tableChecks = normalizeTableChecks(review.tableChecks as DocumentReviewApiResponse['tableChecks']);
+
+  return {
+    originalText: asString(review.originalText),
+    originalHtml: asString(review.originalHtml) ?? null,
+    answer: asString(review.answer) ?? '',
+    confidence: asNumber(review.confidence),
+    fallbackUsed: review.fallbackUsed === true,
+    fallbackReason: asString(review.fallbackReason),
+    summary: {
+      overallOpinion: asString(summary?.overallOpinion) ?? '',
+      totalFindingCount: asNumber(summary?.totalFindingCount, findings.length),
+      highCount: asNumber(summary?.highCount),
+      mediumCount: asNumber(summary?.mediumCount),
+      lowCount: asNumber(summary?.lowCount),
+    },
+    findings,
+    checkRequiredItems,
+    formatNoticeItems,
+    extractedTables,
+    tableChecks,
+    tableChecksAvailable: asBoolean(review.tableChecksAvailable),
+    revisedDocument: {
+      format: 'plain_text',
+      content: asString(revisedDocument?.content) ?? '',
+      htmlContent: asString(revisedDocument?.htmlContent) ?? null,
+    },
+    reviewMarkdown: asString(review.reviewMarkdown) ?? '',
+  };
+}
+
+function reviewResultMessageFromHistory(message: ConversationDetail['messages'][number], review: NonNullable<ReturnType<typeof documentReviewFromMetadata>>): DisplayMessage {
+  const summary = review.summary ?? {
+    overallOpinion: '',
+    totalFindingCount: review.findings?.length ?? 0,
+    highCount: 0,
+    mediumCount: 0,
+    lowCount: 0,
+  };
+  const findings = review.findings ?? [];
+  const checkRequiredItems = review.checkRequiredItems ?? [];
+  const extractedTables = review.extractedTables ?? [];
+  const tableChecks = review.tableChecks ?? [];
+  const revisedDocument = review.revisedDocument ?? {
+    format: 'plain_text',
+    content: message.content,
+    htmlContent: null,
+  };
+  const findingCount = summary.totalFindingCount ?? findings.length;
+  const hasDocumentTables = containsHtmlTable(review.originalHtml) || containsHtmlTable(revisedDocument.htmlContent);
+  const tableSummary = extractedTables.length
+    ? `\n\n인식된 표: ${extractedTables.length}개\n${extractedTables.map(table => `- 표 ${table.index}: ${table.rowCount}행 x ${table.columnCount}열`).join('\n')}`
+    : '\n\n인식된 표: 없음';
+  const feedbackText = `${withoutTableCheckSection(review.reviewMarkdown || message.content)}${tableSummary}`;
+
+  return {
+    id: `${message.role}-${message.queryUid}-${message.createdAt}`,
+    role: message.role,
+    content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**, **${checkRequiredItems.length}건의 확인 항목**, **${tableChecks.length}건의 표 검토 항목**이 식별되었습니다.`,
+    timestamp: new Date(message.createdAt),
+    agentType: 'document',
+    reviewScore: Math.max(55, 95 - findingCount * 5 - checkRequiredItems.length * 3 - tableCheckPenalty(tableChecks)),
+    originalText: review.originalText,
+    originalHtml: review.originalHtml,
+    correctedText: revisedDocument.content,
+    correctedHtml: revisedDocument.htmlContent,
+    tableChecks,
+    tableChecksAvailable: review.tableChecksAvailable ?? false,
+    copyNotice: hasDocumentTables
+      ? '본문 복사 시 표는 자리표시 문구로 대체됩니다. 표는 아래 표 검토 결과를 참고해 원본 전자결재/HWP 표에 직접 반영해 주세요.'
+      : null,
+    stripTablesOnCopy: hasDocumentTables,
+    feedbackText,
+  };
+}
+
 function toDisplayMessages(detail: ConversationDetail): DisplayMessage[] {
   let lastAgent: AgentType = 'main';
   return detail.messages.map((message) => {
     if (message.role === 'user') {
       lastAgent = detectAgentFromText(message.content);
     }
+    const review = message.role === 'assistant' ? documentReviewFromMetadata(message.metadata) : null;
+    if (review) {
+      lastAgent = 'document';
+      return reviewResultMessageFromHistory(message, review);
+    }
     return {
       id: `${message.role}-${message.queryUid}-${message.createdAt}`,
       role: message.role,
-      content: message.content,
+      content: message.role === 'assistant' && lastAgent === 'document'
+        ? withoutTableCheckSection(message.content)
+        : message.content,
       timestamp: new Date(message.createdAt),
       agentType: message.role === 'assistant' ? lastAgent : undefined,
     };
@@ -93,9 +256,25 @@ function containsHtmlTable(html?: string | null): boolean {
   return new DOMParser().parseFromString(html, 'text/html').querySelector('table') !== null;
 }
 
+function withoutTableCheckSection(markdown: string): string {
+  return markdown
+    .replace(/\n?<!-- TABLE_CHECKS_START -->[\s\S]*?<!-- TABLE_CHECKS_END -->\n?/g, '')
+    .replace(/\n?<!-- TABLE_CHECKS_START -->[\s\S]*$/g, '')
+    .replace(/\n?<!-- TABLE_CHECKS_END -->\n?/g, '');
+}
+
+function tableCheckPenalty(tableChecks: DocumentReviewApiResponse['tableChecks']): number {
+  return tableChecks.reduce((sum, item) => {
+    if (item.severity === 'HIGH') return sum + 4;
+    if (item.severity === 'MEDIUM') return sum + 2;
+    return sum + 1;
+  }, 0);
+}
+
 export default function ChatPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const routeState = location.state as { query?: string; newConversation?: boolean; conversationUid?: string } | null;
   const [messages, setMessages]         = useState<DisplayMessage[]>([]);
   const [input, setInput]               = useState('');
   const [isLoading, setIsLoading]       = useState(false);
@@ -103,6 +282,12 @@ export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen]   = useState(false);
   const [histories, setHistories] = useState<ChatHistory[]>([]);
   const [conversationUid, setConversationUid] = useState(() => {
+    if (routeState?.conversationUid) {
+      return routeState.conversationUid;
+    }
+    if (routeState?.newConversation) {
+      return createConversationUid();
+    }
     const stored = window.localStorage.getItem(ACTIVE_CONVERSATION_KEY);
     return stored || createConversationUid();
   });
@@ -162,6 +347,11 @@ export default function ChatPage() {
       if (cancelled) return;
 
       setHistories(items.map(toHistoryItem));
+      if (routeState?.newConversation) return;
+      if (routeState?.conversationUid) {
+        await restoreConversation(routeState.conversationUid);
+        return;
+      }
       const stored = window.localStorage.getItem(ACTIVE_CONVERSATION_KEY);
       if (!stored) return;
 
@@ -175,17 +365,28 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [restoreConversation]);
+  }, [restoreConversation, routeState?.conversationUid, routeState?.newConversation]);
 
   useEffect(() => {
-    const q = location.state?.query as string | undefined;
-    if (q) { handleSend(q); window.history.replaceState({}, ''); }
+    const q = routeState?.query;
+    if (!q) return;
+    if (routeState?.newConversation) {
+      const nextUid = createConversationUid();
+      setConversationUid(nextUid);
+      window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, nextUid);
+      setMessages([]);
+      setCurrentAgent('main');
+      handleSend(q, nextUid);
+    } else {
+      handleSend(q);
+    }
+    window.history.replaceState({}, '');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const push = (m: DisplayMessage) => setMessages(p => [...p, m]);
 
-  const handleSend = async (override?: string) => {
+  const handleSend = async (override?: string, targetConversationUid = conversationUid) => {
     const text = (override ?? input).trim();
     if (!text || isSendingRef.current) return;
     isSendingRef.current = true;
@@ -205,9 +406,10 @@ export default function ChatPage() {
 
     try {
       let streamingStarted = false;
+      let receivedTerminalEvent = false;
       let resolvedAgent: AgentType = currentAgent;
 
-      for await (const event of sendQueryToSpringStream(text, conversationUid)) {
+      for await (const event of sendQueryToSpringStream(text, targetConversationUid)) {
         if (event.type === 'routing') {
           const raw = event.targetAgent.toLowerCase();
           const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
@@ -225,6 +427,7 @@ export default function ChatPage() {
             setMessages(p => p.map(m => m.id === tid ? { ...m, content: m.content + event.text } : m));
           }
         } else if (event.type === 'done') {
+          receivedTerminalEvent = true;
           const raw = (event.targetAgent ?? resolvedAgent).toString().toLowerCase();
           const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
           setCurrentAgent(agent);
@@ -244,6 +447,13 @@ export default function ChatPage() {
             } : m));
           }
         }
+      }
+      if (!streamingStarted && !receivedTerminalEvent) {
+        setMessages(p => p.map(m => m.id === tid ? {
+          ...m,
+          isTyping: false,
+          content: '라우팅은 완료됐지만 에이전트 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요.',
+        } : m));
       }
     } catch {
       setMessages(p => p.map(m =>
@@ -272,21 +482,27 @@ export default function ChatPage() {
         editorJson: doc.editorJson as Record<string, unknown>,
       }, conversationUid);
       const findingCount = res.summary.totalFindingCount;
-      const score = Math.max(55, 95 - findingCount * 5 - res.checkRequiredItems.length * 3);
+      const hasDocumentTables = containsHtmlTable(doc.html) || containsHtmlTable(res.revisedDocument.htmlContent);
+      const score = Math.max(55, 95 - findingCount * 5 - res.checkRequiredItems.length * 3 - tableCheckPenalty(res.tableChecks));
       const tableSummary = res.extractedTables.length
         ? `\n\n인식된 표: ${res.extractedTables.length}개\n${res.extractedTables.map(table => `- 표 ${table.index}: ${table.rowCount}행 x ${table.columnCount}열`).join('\n')}`
         : '\n\n인식된 표: 없음';
-      const feedbackText = `${res.reviewMarkdown}${tableSummary}`;
+      const feedbackText = `${withoutTableCheckSection(res.reviewMarkdown)}${tableSummary}`;
 
       push({
         id: `result-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-        content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**과 **${res.checkRequiredItems.length}건의 확인 항목**이 식별되었습니다.`,
+        content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**, **${res.checkRequiredItems.length}건의 확인 항목**, **${res.tableChecks.length}건의 표 검토 항목**이 식별되었습니다.`,
         reviewScore: score,
+        originalText: doc.text,
+        originalHtml: doc.html,
         correctedText: res.revisedDocument.content,
         correctedHtml: res.revisedDocument.htmlContent,
-        copyNotice: containsHtmlTable(doc.html) && !containsHtmlTable(res.revisedDocument.htmlContent)
-          ? '원문에는 표가 있었지만 수정 결과 HTML에는 표 구조가 포함되지 않았습니다. 복사 시 수정 텍스트 기준으로 반영되며, 표 구조 보존은 서버 수정 HTML이 표를 유지할 때만 가능합니다.'
+        tableChecks: res.tableChecks,
+        tableChecksAvailable: res.tableChecksAvailable,
+        copyNotice: hasDocumentTables
+          ? '본문 복사 시 표는 자리표시 문구로 대체됩니다. 표는 아래 표 검토 결과를 참고해 원본 전자결재/HWP 표에 직접 반영해 주세요.'
           : null,
+        stripTablesOnCopy: hasDocumentTables,
         feedbackText,
       });
     } catch {
@@ -325,6 +541,7 @@ export default function ChatPage() {
       <header className="site-header chat-mode" style={{ display: 'flex', alignItems: 'center', padding: '0 32px', gap: 12 }}>
         {/* Hamburger */}
         <button onClick={() => setSidebarOpen(true)}
+          className="chat-menu-button"
           style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 8, borderRadius: 6,
             color: 'var(--text-2)', display: 'flex', alignItems: 'center', transition: 'background 0.12s' }}
           onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg)')}
@@ -363,15 +580,15 @@ export default function ChatPage() {
         histories={histories}
         onSelectHistory={handleSelectHistory}
         onNewChat={handleNewChat}
+        activeId={conversationUid}
       />
 
       {/* ── Messages ── */}
-      <main style={{
+      <main className="chat-main" style={{
         flex: 1, overflowY: 'auto', padding: '24px 16px',
-        marginTop: 100, marginLeft: sidebarOpen ? 260 : 0,
-        transition: 'margin-left 0.26s cubic-bezier(0.16,1,0.3,1)',
+        marginTop: 100,
       }}>
-        <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ maxWidth: messages.some((message) => message.reviewScore !== undefined) ? 1040 : 760, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
           {/* Empty state */}
           {!hasMsg && (
@@ -534,9 +751,14 @@ export default function ChatPage() {
                     {msg.reviewScore !== undefined && (
                       <ReviewResult
                         score={msg.reviewScore}
+                        originalText={msg.originalText}
+                        originalHtml={msg.originalHtml}
                         correctedText={msg.correctedText ?? ''}
                         correctedHtml={msg.correctedHtml}
                         copyNotice={msg.copyNotice}
+                        tableChecks={msg.tableChecks}
+                        tableChecksAvailable={msg.tableChecksAvailable}
+                        stripTablesOnCopy={msg.stripTablesOnCopy}
                         feedbackText={msg.feedbackText ?? ''}
                       />
                     )}
@@ -550,11 +772,9 @@ export default function ChatPage() {
       </main>
 
       {/* ── Input bar ── */}
-      <footer style={{
+      <footer className="chat-footer" style={{
         flexShrink: 0, padding: '8px 16px 16px',
         background: 'var(--bg)', borderTop: '1px solid var(--border)',
-        marginLeft: sidebarOpen ? 260 : 0,
-        transition: 'margin-left 0.26s cubic-bezier(0.16,1,0.3,1)',
       }}>
         <div style={{ maxWidth: 760, margin: '0 auto' }}>
           {/* Input */}
