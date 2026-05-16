@@ -194,15 +194,12 @@ function reviewResultMessageFromHistory(message: ConversationDetail['messages'][
   };
   const findingCount = summary.totalFindingCount ?? findings.length;
   const hasDocumentTables = containsHtmlTable(review.originalHtml) || containsHtmlTable(revisedDocument.htmlContent);
-  const tableSummary = extractedTables.length
-    ? `\n\n인식된 표: ${extractedTables.length}개\n${extractedTables.map(table => `- 표 ${table.index}: ${table.rowCount}행 x ${table.columnCount}열`).join('\n')}`
-    : '\n\n인식된 표: 없음';
-  const feedbackText = `${withoutTableCheckSection(review.reviewMarkdown || message.content)}${tableSummary}`;
+  const feedbackText = withoutTableCheckSection(review.reviewMarkdown || message.content);
 
   return {
     id: `${message.role}-${message.queryUid}-${message.createdAt}`,
     role: message.role,
-    content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**, **${checkRequiredItems.length}건의 확인 항목**, **${tableChecks.length}건의 표 검토 항목**이 식별되었습니다.`,
+    content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**, **${checkRequiredItems.length + tableChecks.length}건의 직접 확인 항목**이 식별되었습니다.`,
     timestamp: new Date(message.createdAt),
     agentType: 'document',
     reviewScore: Math.max(55, 95 - findingCount * 5 - checkRequiredItems.length * 3 - tableCheckPenalty(tableChecks)),
@@ -213,9 +210,9 @@ function reviewResultMessageFromHistory(message: ConversationDetail['messages'][
     tableChecks,
     tableChecksAvailable: review.tableChecksAvailable ?? false,
     copyNotice: hasDocumentTables
-      ? '본문 복사 시 표는 자리표시 문구로 대체됩니다. 표는 아래 표 검토 결과를 참고해 원본 전자결재/HWP 표에 직접 반영해 주세요.'
+      ? '본문 복사 시 표를 포함한 HTML을 클립보드에 담습니다. 화면 미리보기와 WebHWP 붙여넣기 결과는 다를 수 있습니다.'
       : null,
-    stripTablesOnCopy: hasDocumentTables,
+    stripTablesOnCopy: false,
     feedbackText,
   };
 }
@@ -474,35 +471,33 @@ export default function ChatPage() {
       content: '작성하신 문서를 ○○ 규정 및 공문서 작성 준칙에 따라 정밀 검토 중입니다. 잠시만 기다려 주세요.' });
 
     try {
+      const sourceHtml = doc.rawHtml || doc.html;
       const res = await reviewDocument({
         title: '전자결재 문서',
         docType: 'OFFICIAL_DOCUMENT',
         bodyText: doc.text,
-        bodyHtml: doc.html,
+        bodyHtml: sourceHtml,
         editorJson: doc.editorJson as Record<string, unknown>,
       }, conversationUid);
       const findingCount = res.summary.totalFindingCount;
-      const hasDocumentTables = containsHtmlTable(doc.html) || containsHtmlTable(res.revisedDocument.htmlContent);
+      const hasDocumentTables = containsHtmlTable(sourceHtml) || containsHtmlTable(res.revisedDocument.htmlContent);
       const score = Math.max(55, 95 - findingCount * 5 - res.checkRequiredItems.length * 3 - tableCheckPenalty(res.tableChecks));
-      const tableSummary = res.extractedTables.length
-        ? `\n\n인식된 표: ${res.extractedTables.length}개\n${res.extractedTables.map(table => `- 표 ${table.index}: ${table.rowCount}행 x ${table.columnCount}열`).join('\n')}`
-        : '\n\n인식된 표: 없음';
-      const feedbackText = `${withoutTableCheckSection(res.reviewMarkdown)}${tableSummary}`;
+      const feedbackText = withoutTableCheckSection(res.reviewMarkdown);
 
       push({
         id: `result-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-        content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**, **${res.checkRequiredItems.length}건의 확인 항목**, **${res.tableChecks.length}건의 표 검토 항목**이 식별되었습니다.`,
+        content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**, **${res.checkRequiredItems.length + res.tableChecks.length}건의 직접 확인 항목**이 식별되었습니다.`,
         reviewScore: score,
         originalText: doc.text,
-        originalHtml: doc.html,
+        originalHtml: sourceHtml,
         correctedText: res.revisedDocument.content,
         correctedHtml: res.revisedDocument.htmlContent,
         tableChecks: res.tableChecks,
         tableChecksAvailable: res.tableChecksAvailable,
         copyNotice: hasDocumentTables
-          ? '본문 복사 시 표는 자리표시 문구로 대체됩니다. 표는 아래 표 검토 결과를 참고해 원본 전자결재/HWP 표에 직접 반영해 주세요.'
+          ? '본문 복사 시 표를 포함한 HTML을 클립보드에 담습니다. 화면 미리보기와 WebHWP 붙여넣기 결과는 다를 수 있습니다.'
           : null,
-        stripTablesOnCopy: hasDocumentTables,
+        stripTablesOnCopy: false,
         feedbackText,
       });
     } catch {

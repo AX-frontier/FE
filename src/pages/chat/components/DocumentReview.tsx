@@ -15,6 +15,7 @@ import type { DocumentReviewApiResponse } from '@/utils/aiService';
 export interface DocumentSubmitPayload {
   text: string;
   html: string;
+  rawHtml?: string;
   editorJson: JSONContent;
 }
 
@@ -153,20 +154,59 @@ function visualizeSpaces(value: string): string {
 
 function renderMarkdown(markdown: string): string {
   const lines = markdown.split('\n');
-  return lines
-    .map((line) => {
-      if (line.startsWith('### ')) return `<h3>${escapeHtml(line.slice(4))}</h3>`;
-      if (line.startsWith('## ')) return `<h2>${escapeHtml(line.slice(3))}</h2>`;
-      const changeLine = line.match(/^(\s*-\s+(?:원문|수정안):)(.*)$/);
-      if (changeLine) {
-        const value = changeLine[2].startsWith(' ') ? changeLine[2].slice(1) : changeLine[2];
-        return `<p class="markdown-list">${escapeHtml(changeLine[1])} <code class="space-visible">${escapeHtml(visualizeSpaces(value))}</code></p>`;
+  const rendered: string[] = [];
+  let section = '';
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.startsWith('### ')) {
+      section = line.slice(4);
+      rendered.push(`<h3>${escapeHtml(section)}</h3>`);
+      continue;
+    }
+    if (line.startsWith('## ')) {
+      section = line.slice(3);
+      rendered.push(`<h2>${escapeHtml(section)}</h2>`);
+      continue;
+    }
+    const findingLine = line.match(/^- (?:\[(HIGH|MEDIUM|LOW)\]\s+)?(.+)$/);
+    if (section === '자동 수정 제안' && findingLine && !line.includes('자동 수정 제안 없음')) {
+      const detailLines: string[] = [];
+      while (lines[index + 1]?.startsWith('  - ')) {
+        index += 1;
+        const detail = lines[index].replace(/^  - /, '');
+        const changeLine = detail.match(/^(원문|수정안):(.*)$/);
+        if (changeLine) {
+          const value = changeLine[2].startsWith(' ') ? changeLine[2].slice(1) : changeLine[2];
+          detailLines.push(
+            `<p><strong>${escapeHtml(changeLine[1])}</strong>: <code class="space-visible">${escapeHtml(visualizeSpaces(value))}</code></p>`
+          );
+        } else {
+          detailLines.push(`<p>${escapeHtml(detail)}</p>`);
+        }
       }
-      if (line.startsWith('- ')) return `<p class="markdown-list">${escapeHtml(line)}</p>`;
-      if (!line.trim()) return '<br />';
-      return `<p>${escapeHtml(line)}</p>`;
-    })
-    .join('');
+      rendered.push(
+        `<div class="review-finding-card">` +
+          `<div class="review-finding-title">${escapeHtml(findingLine[2])}</div>` +
+          detailLines.join('') +
+        `</div>`
+      );
+      continue;
+    }
+    if (line.startsWith('- ') && section === '직접 확인 필요') {
+      rendered.push(`<div class="review-check-card">${escapeHtml(line.slice(2))}</div>`);
+      continue;
+    }
+    if (line.startsWith('- ')) {
+      rendered.push(`<p class="markdown-list">${escapeHtml(line)}</p>`);
+      continue;
+    }
+    if (!line.trim()) {
+      rendered.push('<br />');
+      continue;
+    }
+    rendered.push(`<p>${escapeHtml(line)}</p>`);
+  }
+  return rendered.join('');
 }
 
 function sanitizeClipboardDocument(doc: Document): void {
@@ -228,6 +268,12 @@ function normalizeHtmlForClipboard(html: string): string {
   return `<!doctype html><html><head><meta charset="utf-8">${doc.head.innerHTML}</head><body>${doc.body.innerHTML}</body></html>`;
 }
 
+function sanitizeHtmlForClipboard(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  sanitizeClipboardDocument(doc);
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body>${doc.body.innerHTML}</body></html>`;
+}
+
 function stripTablesForBodyCopy(html: string): string {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   sanitizeClipboardDocument(doc);
@@ -255,6 +301,8 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
   const [tableCount, setTableCount] = useState(0);
   const [pasteInfo, setPasteInfo] = useState('아직 붙여넣기 없음');
   const [pasteDiagnostics, setPasteDiagnostics] = useState<PasteDiagnostics | null>(null);
+  const [rawClipboardHtml, setRawClipboardHtml] = useState<string | null>(null);
+  const [rawCopyStatus, setRawCopyStatus] = useState<string | null>(null);
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -274,6 +322,8 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
         const types = Array.from(event.clipboardData?.types ?? []);
         const html = event.clipboardData?.getData('text/html') ?? '';
         const plain = event.clipboardData?.getData('text/plain') ?? '';
+        setRawClipboardHtml(html ? sanitizeHtmlForPreview(html) : null);
+        setRawCopyStatus(null);
         if (showPasteDiagnostics) {
           setPasteDiagnostics(inspectClipboardHtml(types, html, plain));
         }
@@ -295,8 +345,29 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
     onSubmit({
       text,
       html,
+      rawHtml: rawClipboardHtml ?? undefined,
       editorJson: editor.getJSON(),
     });
+  };
+
+  const handleCopyRawHtml = async () => {
+    if (!rawClipboardHtml) return;
+    try {
+      const plainText = htmlToText(rawClipboardHtml);
+      if ('ClipboardItem' in window) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([rawClipboardHtml], { type: 'text/html' }),
+            'text/plain': new Blob([plainText], { type: 'text/plain' }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(plainText);
+      }
+      setRawCopyStatus('원본 HTML 복사됨');
+    } catch {
+      setRawCopyStatus('원본 HTML 복사 실패');
+    }
   };
 
   return (
@@ -327,15 +398,37 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
       }}>
         <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
           {textLength}자 · 표 {tableCount}개 · {pasteInfo}
+          {rawClipboardHtml ? ' · 원본 HTML 보존됨' : ''}
         </span>
-        <button
-          onClick={handleSubmit}
-          disabled={!editor || textLength === 0 || isLoading}
-          className="btn-blue"
-          style={{ padding: '7px 16px', borderRadius: 7, fontSize: 12, fontFamily: 'inherit' }}
-        >
-          {isLoading ? '검수 중...' : '검수하기'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {showPasteDiagnostics && rawClipboardHtml && (
+            <button
+              type="button"
+              onClick={handleCopyRawHtml}
+              style={{
+                border: '1px solid var(--border)',
+                background: 'var(--surface)',
+                color: 'var(--text-2)',
+                padding: '7px 10px',
+                borderRadius: 7,
+                fontSize: 12,
+                fontWeight: 700,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              {rawCopyStatus ?? '원본 HTML 복사 테스트'}
+            </button>
+          )}
+          <button
+            onClick={handleSubmit}
+            disabled={!editor || textLength === 0 || isLoading}
+            className="btn-blue"
+            style={{ padding: '7px 16px', borderRadius: 7, fontSize: 12, fontFamily: 'inherit' }}
+          >
+            {isLoading ? '검수 중...' : '검수하기'}
+          </button>
+        </div>
       </div>
       {showPasteDiagnostics && pasteDiagnostics && (
         <details
@@ -437,24 +530,30 @@ export function ReviewResult({
 
   const handleCopy = async () => {
     try {
-      const copyHtml = stripTablesOnCopy
-        ? stripTablesForBodyCopy(correctedHtml ?? '')
-        : correctedHtml;
-      const copyText = stripTablesOnCopy
-        ? htmlToText(copyHtml || `<p>${tablePlaceholder(0)}</p>`)
-        : correctedText;
+      const copyHtml = correctedHtml ? sanitizeHtmlForClipboard(correctedHtml) : correctedHtml;
+      const copyText = copyHtml ? htmlToText(copyHtml) : correctedText;
+      let richCopyFallback = false;
       if (correctedHtml && 'ClipboardItem' in window) {
-        const clipboardHtml = normalizeHtmlForClipboard(copyHtml || `<p>${tablePlaceholder(0)}</p>`);
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            'text/html': new Blob([clipboardHtml], { type: 'text/html' }),
-            'text/plain': new Blob([copyText], { type: 'text/plain' }),
-          }),
-        ]);
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'text/html': new Blob([copyHtml || ''], { type: 'text/html' }),
+              'text/plain': new Blob([copyText], { type: 'text/plain' }),
+            }),
+          ]);
+        } catch {
+          richCopyFallback = true;
+          await navigator.clipboard.writeText(copyText);
+        }
       } else {
+        richCopyFallback = Boolean(correctedHtml);
         await navigator.clipboard.writeText(copyText);
       }
-      setCopyError(null);
+      setCopyError(
+        richCopyFallback
+          ? '브라우저가 HTML 복사를 허용하지 않아 텍스트만 복사했습니다. 표까지 붙여넣으려면 브라우저 클립보드 권한을 확인해 주세요.'
+          : null
+      );
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -475,7 +574,7 @@ export function ReviewResult({
     if (s === '보완') return 'section-warn';
     return 'section-err';
   };
-  const copyButtonLabel = copied ? '복사됨' : stripTablesOnCopy ? '표 제외 본문 복사' : '본문 복사';
+  const copyButtonLabel = copied ? '복사됨' : '본문 복사';
 
   return (
     <div className="anim-fade-up" style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
@@ -514,59 +613,6 @@ export function ReviewResult({
           dangerouslySetInnerHTML={{ __html: renderMarkdown(feedbackText) }}
         />
       )}
-
-      {/* Table checks */}
-      <div className="review-card" style={{ padding: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-1)' }}>표 검토 결과</span>
-          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>원본 표에 직접 반영</span>
-        </div>
-        {!tableChecksAvailable ? (
-          <p style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--warn)' }}>
-            표 검토를 수행하지 못했습니다. 원본 전자결재/HWP 표에서 금액과 필수 항목을 직접 확인해 주세요.
-          </p>
-        ) : tableChecks.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {tableChecks.map((item) => {
-              const severityColor = item.severity === 'HIGH'
-                ? 'var(--err)'
-                : item.severity === 'MEDIUM'
-                  ? 'var(--warn)'
-                  : 'var(--text-3)';
-              return (
-                <div
-                  key={item.id}
-                  style={{
-                    border: '1px solid var(--border)',
-                    borderRadius: 8,
-                    padding: '10px 12px',
-                    background: 'var(--surface)',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: '#fff', background: severityColor, borderRadius: 4, padding: '2px 6px' }}>
-                      {item.severity}
-                    </span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-1)' }}>
-                      표 {item.tableIndex || '-'} · {item.tableTitle}
-                    </span>
-                  </div>
-                  <p style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--text-1)', marginBottom: 5 }}>
-                    {item.message}
-                  </p>
-                  <p style={{ fontSize: 11, lineHeight: 1.55, color: 'var(--text-3)' }}>
-                    권장 조치: {item.suggestion}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--text-3)' }}>
-            표에서 자동으로 대조 가능한 금액·필수 항목 오류는 발견되지 않았습니다.
-          </p>
-        )}
-      </div>
 
       {/* Before / after document */}
       {correctedText && (
@@ -661,7 +707,7 @@ export function ReviewResult({
                   className="review-document-preview"
                   style={{ minHeight: 220, maxHeight: 520, padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', overflow: 'auto' }}
                   dangerouslySetInnerHTML={{
-                    __html: buildDocumentPreviewHtml(correctedHtml, stripTablesOnCopy),
+                    __html: buildDocumentPreviewHtml(correctedHtml, false),
                   }}
                 />
               ) : (
