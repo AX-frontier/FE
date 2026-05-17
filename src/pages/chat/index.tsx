@@ -292,6 +292,7 @@ export default function ChatPage() {
   const bottomRef      = useRef<HTMLDivElement>(null);
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
   const isSendingRef   = useRef(false);
+  const didAutoSubmitRef = useRef(false);
 
   const scrollBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -365,8 +366,10 @@ export default function ChatPage() {
   }, [restoreConversation, routeState?.conversationUid, routeState?.newConversation]);
 
   useEffect(() => {
+    if (didAutoSubmitRef.current) return;
     const q = routeState?.query;
     if (!q) return;
+    didAutoSubmitRef.current = true;
     if (routeState?.newConversation) {
       const nextUid = createConversationUid();
       setConversationUid(nextUid);
@@ -377,7 +380,7 @@ export default function ChatPage() {
     } else {
       handleSend(q);
     }
-    window.history.replaceState({}, '');
+    window.history.replaceState({}, '', `${location.pathname}${location.search}`);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
