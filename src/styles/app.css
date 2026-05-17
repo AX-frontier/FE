@@ -492,6 +492,29 @@ body {
 .review-markdown .markdown-list {
   padding-left: 14px;
 }
+.review-markdown .review-finding-card,
+.review-markdown .review-check-card {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.review-markdown .review-finding-card {
+  border-left-width: 4px;
+  border-left-color: var(--blue);
+}
+.review-markdown .review-finding-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-1);
+}
+.review-markdown .review-check-card {
+  color: var(--text-1);
+  font-size: 12px;
+  line-height: 1.65;
+}
 .review-markdown .space-visible {
   padding: 1px 5px;
   border-radius: 4px;
