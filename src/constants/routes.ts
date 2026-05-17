@@ -1,4 +1,6 @@
 export const ROUTES = {
-  HOME: '/',
-  CHAT: '/chat',
+	HOME: "/",
+	CHAT: "/chat",
+	CHAT_REDESIGN: "/chat-redesign",
+	CHAT_REDSIGN: "/chat-redsign",
 } as const;
