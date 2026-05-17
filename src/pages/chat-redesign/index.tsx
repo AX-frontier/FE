@@ -521,6 +521,7 @@ export default function ChatRedesignPage() {
 
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const isSendingRef = useRef(false);
+	const didAutoSubmitRef = useRef(false);
 
 	const scrollBottom = useCallback(() => {
 		bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -609,8 +610,10 @@ export default function ChatRedesignPage() {
 	// Keep route-state auto-submit one-shot, matching the current chat page behavior.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: route state should only seed the first render.
 	useEffect(() => {
+		if (didAutoSubmitRef.current) return;
 		const q = routeState?.query;
 		if (!q) return;
+		didAutoSubmitRef.current = true;
 		if (routeState?.newConversation) {
 			const nextUid = createConversationUid();
 			setConversationUid(nextUid);
@@ -621,7 +624,7 @@ export default function ChatRedesignPage() {
 		} else {
 			handleSend(q);
 		}
-		window.history.replaceState({}, "");
+		window.history.replaceState({}, "", `${location.pathname}${location.search}`);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
