@@ -17,6 +17,7 @@ import type { DocumentReviewApiResponse } from "@/utils/aiService";
 import {
 	BookOpen,
 	ClipboardCheck,
+	type LucideIcon,
 	Library,
 	Menu,
 	RotateCcw,
@@ -74,6 +75,31 @@ const DESK_META: Record<
 	document: {
 		label: "문서 검토",
 		color: "#6B3A0F",
+	},
+};
+
+const ROUTE_META: Record<
+	AgentType,
+	{
+		classification: string;
+		icon: LucideIcon;
+		hint: string;
+	}
+> = {
+	main: {
+		classification: "일반 문의",
+		icon: BookOpen,
+		hint: "학사, 장학, 교내 공지와 일반 안내를 연결해요",
+	},
+	library: {
+		classification: "학술 정보",
+		icon: Library,
+		hint: "도서 검색, 대출·반납, 열람실, 학술 DB를 안내해요",
+	},
+	document: {
+		classification: "문서 점검",
+		icon: ClipboardCheck,
+		hint: "전자결재 문서의 표현, 형식, 표 검토를 진행해요",
 	},
 };
 
@@ -1099,13 +1125,16 @@ export default function ChatRedesignPage() {
 				<section className="desk-workspace">
 					{hasMsg && (
 						<div className={`desk-ledger ${reviewMode ? "is-wide" : ""}`}>
-							{messages
-								.filter((msg) => !msg.isAgentDiscovery)
-								.map((msg) => {
-									const meta = DESK_META[msg.agentType ?? currentAgent];
-									return (
-										<article
-											key={msg.id}
+								{messages
+									.filter((msg) => !msg.isAgentDiscovery)
+									.map((msg) => {
+										const agent = msg.agentType ?? currentAgent;
+										const meta = DESK_META[agent];
+										const route = ROUTE_META[agent];
+										const AgentIcon = route.icon;
+										return (
+											<article
+												key={msg.id}
 											className={`desk-entry desk-entry-${msg.role}`}
 										>
 											{msg.role === "user" ? (
@@ -1119,15 +1148,32 @@ export default function ChatRedesignPage() {
 																"--desk-accent": meta.color,
 															} as React.CSSProperties
 														}
-													>
-														<div className="desk-answer-head">
-															<div className="desk-agent-route">
-																<span className="desk-agent-route-chip">
-																	{meta.label}
-																</span>
+														>
+															<div className="desk-answer-head">
+																<div className="desk-agent-route">
+																	<div className="desk-agent-route-status">
+																		<span className="desk-agent-route-check" />
+																		에이전트 연결 완료
+																	</div>
+																	<div className="desk-agent-route-track">
+																		<span className="desk-agent-route-chip desk-agent-route-chip-classification">
+																			{route.classification}
+																		</span>
+																		<span
+																			className="desk-agent-route-connector"
+																			aria-hidden="true"
+																		>
+																			→
+																		</span>
+																		<span className="desk-agent-route-chip desk-agent-route-chip-agent">
+																			<AgentIcon size={13} />
+																			{meta.label} AI
+																		</span>
+																	</div>
+																	<p className="desk-agent-route-hint">{route.hint}</p>
+																</div>
+																<small>{formatClock(msg.timestamp)}</small>
 															</div>
-															<small>{formatClock(msg.timestamp)}</small>
-														</div>
 														{msg.isTyping ? (
 															<div className="desk-answer-loading">
 																<span />
