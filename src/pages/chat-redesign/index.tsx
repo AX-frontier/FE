@@ -17,7 +17,6 @@ import type { DocumentReviewApiResponse } from "@/utils/aiService";
 import {
 	BookOpen,
 	ClipboardCheck,
-	type LucideIcon,
 	Library,
 	Menu,
 	RotateCcw,
@@ -47,9 +46,25 @@ type DisplayMessage = Message & {
 	initialDocText?: string;
 	loadingText?: string;
 	sourceLinks?: SourceLink[];
+	bookMatches?: BookMatch[];
+	searchKeyword?: string | null;
+	resultCount?: number | null;
 };
 
 const ACTIVE_CONVERSATION_KEY = "hansung-ai.activeConversationUid";
+
+const DOCUMENT_REVIEW_SAMPLE = `수신: 교무처장
+제목: 비교과 프로그램 운영 결과 보고
+
+1. 관련: 교육혁신지원팀-1234(2026.05.10.)
+2. 위 호와 관련하여 2026학년도 비교과 프로그램 운영 결과를 아래와 같이 보고합니다.
+
+가. 프로그램명: AX Frontier 문서 검토 워크숍
+나. 운영일시: 2026.05.17.(일) 14:00~16:00
+다. 참석인원: 재학생 32명
+라. 주요내용: 전자결재 문서 작성 기준, 표기 오류 점검, 검토 의견 반영
+
+붙임  운영 결과 요약 1부.  끝.`;
 
 type SourceLink = {
 	title: string;
@@ -57,49 +72,40 @@ type SourceLink = {
 	label?: string;
 };
 
+type BookMatch = {
+	id?: number;
+	title: string;
+	author?: string | null;
+	publisher?: string | null;
+	publishYear?: number | null;
+	holdingCallNo?: string | null;
+	materialType?: string | null;
+	stackLocation?: string | null;
+	stackShelf?: string | null;
+};
+
 const DESK_META: Record<
 	AgentType,
 	{
 		label: string;
+		description: string;
 		color: string;
 	}
 > = {
 	main: {
 		label: "종합 안내",
-		color: "#003DA5",
+		description: "학사, 공지, 장학, 시설처럼 학교 전반 질문을 처리합니다",
+		color: "#174EA6",
 	},
 	library: {
 		label: "학술정보관",
-		color: "#0B6E4F",
+		description: "도서 검색, 대출·반납, 열람실, 학술 DB 정보를 안내합니다",
+		color: "#2D6F7A",
 	},
 	document: {
-		label: "문서 검토",
-		color: "#6B3A0F",
-	},
-};
-
-const ROUTE_META: Record<
-	AgentType,
-	{
-		classification: string;
-		icon: LucideIcon;
-		hint: string;
-	}
-> = {
-	main: {
-		classification: "일반 문의",
-		icon: BookOpen,
-		hint: "학사, 장학, 교내 공지와 일반 안내를 연결해요",
-	},
-	library: {
-		classification: "학술 정보",
-		icon: Library,
-		hint: "도서 검색, 대출·반납, 열람실, 학술 DB를 안내해요",
-	},
-	document: {
-		classification: "문서 점검",
-		icon: ClipboardCheck,
-		hint: "전자결재 문서의 표현, 형식, 표 검토를 진행해요",
+		label: "문서 검토 에이전트",
+		description: "전자결재 문서의 표현, 형식, 표 유지 여부를 점검합니다",
+		color: "#4F5D95",
 	},
 };
 
@@ -231,6 +237,48 @@ function mergeSourceLinks(
 		if (!byUrl.has(source.url)) byUrl.set(source.url, source);
 	}
 	return Array.from(byUrl.values()).slice(0, 4);
+}
+
+function numberFromUnknown(value: unknown): number | undefined {
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "string" && value.trim()) {
+		const parsed = Number(value);
+		if (Number.isFinite(parsed)) return parsed;
+	}
+	return undefined;
+}
+
+function bookMatchesFromUnknown(value: unknown): BookMatch[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((book): BookMatch | null => {
+			if (!book || typeof book !== "object") return null;
+			const record = book as Record<string, unknown>;
+			const title = typeof record.title === "string" ? record.title.trim() : "";
+			if (!title) return null;
+			return {
+				id: numberFromUnknown(record.id),
+				title,
+				author: typeof record.author === "string" ? record.author : null,
+				publisher:
+					typeof record.publisher === "string" ? record.publisher : null,
+				publishYear: numberFromUnknown(record.publishYear),
+				holdingCallNo:
+					typeof record.holdingCallNo === "string"
+						? record.holdingCallNo
+						: null,
+				materialType:
+					typeof record.materialType === "string" ? record.materialType : null,
+				stackLocation:
+					typeof record.stackLocation === "string"
+						? record.stackLocation
+						: null,
+				stackShelf:
+					typeof record.stackShelf === "string" ? record.stackShelf : null,
+			};
+		})
+		.filter((book): book is BookMatch => Boolean(book))
+		.slice(0, 5);
 }
 
 function formatClock(date: Date): string {
@@ -536,6 +584,10 @@ export default function ChatRedesignPage() {
 	const [input, setInput] = useState("");
 	const [isLoading, setIsLoading] = useState(false);
 	const [currentAgent, setCurrentAgent] = useState<AgentType>("main");
+	const [documentTemplate, setDocumentTemplate] = useState({
+		id: 0,
+		text: "",
+	});
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [histories, setHistories] = useState<ChatHistory[]>([]);
 	const [conversationUid, setConversationUid] = useState(() => {
@@ -546,6 +598,9 @@ export default function ChatRedesignPage() {
 	});
 
 	const bottomRef = useRef<HTMLDivElement>(null);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
+	const composingRef = useRef(false);
+	const clearingInputRef = useRef(false);
 	const isSendingRef = useRef(false);
 	const didAutoSubmitRef = useRef(false);
 
@@ -650,7 +705,11 @@ export default function ChatRedesignPage() {
 		} else {
 			handleSend(q);
 		}
-		window.history.replaceState({}, "", `${location.pathname}${location.search}`);
+		window.history.replaceState(
+			{},
+			"",
+			`${location.pathname}${location.search}`,
+		);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
@@ -664,7 +723,12 @@ export default function ChatRedesignPage() {
 		const text = (override ?? input).trim();
 		if (!text || isSendingRef.current) return;
 		isSendingRef.current = true;
+		clearingInputRef.current = true;
 		setInput("");
+		if (inputRef.current) inputRef.current.value = "";
+		window.setTimeout(() => {
+			clearingInputRef.current = false;
+		}, 0);
 		setIsLoading(true);
 
 		push({
@@ -773,6 +837,7 @@ export default function ChatRedesignPage() {
 							sourceLinksFromSources(event.sources),
 							answer,
 						);
+						const bookMatches = bookMatchesFromUnknown(event.matchedBooks);
 						setMessages((previous) =>
 							previous.map((message) =>
 								message.id === tid
@@ -784,6 +849,15 @@ export default function ChatRedesignPage() {
 											content: answer,
 											showDocInput: true,
 											sourceLinks,
+											bookMatches,
+											searchKeyword:
+												typeof event.searchKeyword === "string"
+													? event.searchKeyword
+													: null,
+											resultCount:
+												typeof event.resultCount === "number"
+													? event.resultCount
+													: null,
 										}
 									: message,
 							),
@@ -795,6 +869,9 @@ export default function ChatRedesignPage() {
 									? (() => {
 											const answer =
 												(event.answer as string) ?? message.content;
+											const bookMatches = bookMatchesFromUnknown(
+												event.matchedBooks,
+											);
 											return {
 												...message,
 												agentType: agent,
@@ -805,6 +882,15 @@ export default function ChatRedesignPage() {
 													sourceLinksFromSources(event.sources),
 													answer,
 												),
+												bookMatches,
+												searchKeyword:
+													typeof event.searchKeyword === "string"
+														? event.searchKeyword
+														: null,
+												resultCount:
+													typeof event.resultCount === "number"
+														? event.resultCount
+														: null,
 											};
 										})()
 									: message,
@@ -977,6 +1063,7 @@ export default function ChatRedesignPage() {
 		window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, nextUid);
 		setMessages([]);
 		setCurrentAgent("main");
+		setDocumentTemplate({ id: 0, text: "" });
 		setSidebarOpen(false);
 	};
 
@@ -987,6 +1074,7 @@ export default function ChatRedesignPage() {
 
 	const openDocumentDesk = () => {
 		setCurrentAgent("document");
+		setDocumentTemplate({ id: 0, text: "" });
 		push({
 			id: `desk-doc-${Date.now()}`,
 			role: "assistant",
@@ -1125,16 +1213,14 @@ export default function ChatRedesignPage() {
 				<section className="desk-workspace">
 					{hasMsg && (
 						<div className={`desk-ledger ${reviewMode ? "is-wide" : ""}`}>
-								{messages
-									.filter((msg) => !msg.isAgentDiscovery)
-									.map((msg) => {
-										const agent = msg.agentType ?? currentAgent;
-										const meta = DESK_META[agent];
-										const route = ROUTE_META[agent];
-										const AgentIcon = route.icon;
-										return (
-											<article
-												key={msg.id}
+							{messages
+								.filter((msg) => !msg.isAgentDiscovery)
+								.map((msg) => {
+									const agent = msg.agentType ?? currentAgent;
+									const meta = DESK_META[agent];
+									return (
+										<article
+											key={msg.id}
 											className={`desk-entry desk-entry-${msg.role}`}
 										>
 											{msg.role === "user" ? (
@@ -1148,32 +1234,17 @@ export default function ChatRedesignPage() {
 																"--desk-accent": meta.color,
 															} as React.CSSProperties
 														}
-														>
-															<div className="desk-answer-head">
-																<div className="desk-agent-route">
-																	<div className="desk-agent-route-status">
-																		<span className="desk-agent-route-check" />
-																		에이전트 연결 완료
-																	</div>
-																	<div className="desk-agent-route-track">
-																		<span className="desk-agent-route-chip desk-agent-route-chip-classification">
-																			{route.classification}
-																		</span>
-																		<span
-																			className="desk-agent-route-connector"
-																			aria-hidden="true"
-																		>
-																			→
-																		</span>
-																		<span className="desk-agent-route-chip desk-agent-route-chip-agent">
-																			<AgentIcon size={13} />
-																			{meta.label} AI
-																		</span>
-																	</div>
-																	<p className="desk-agent-route-hint">{route.hint}</p>
-																</div>
-																<small>{formatClock(msg.timestamp)}</small>
+													>
+														<div className="desk-answer-head">
+															<div className="desk-agent-route">
+																<span className="desk-agent-dot" />
+																<span className="desk-agent-route-text">
+																	<strong>{meta.label}</strong>
+																	<em>{meta.description}</em>
+																</span>
 															</div>
+															<small>{formatClock(msg.timestamp)}</small>
+														</div>
 														{msg.isTyping ? (
 															<div className="desk-answer-loading">
 																<span />
@@ -1216,33 +1287,144 @@ export default function ChatRedesignPage() {
 																			</div>
 																		</div>
 																	)}
+																{msg.bookMatches &&
+																	msg.bookMatches.length > 0 && (
+																		<div className="desk-book-results">
+																			<div className="desk-book-results-head">
+																				<span>추천 도서</span>
+																				<small>
+																					{msg.searchKeyword
+																						? `"${msg.searchKeyword}" 검색`
+																						: "학술정보관 소장자료"}
+																					{typeof msg.resultCount === "number"
+																						? ` · ${msg.resultCount}건`
+																						: ""}
+																				</small>
+																			</div>
+																			<div className="desk-book-list">
+																				{msg.bookMatches.map((book, index) => (
+																					<div
+																						className="desk-book-row"
+																						key={`${book.id ?? book.title}-${index}`}
+																					>
+																						<strong>{index + 1}</strong>
+																						<div>
+																							<span>{book.title}</span>
+																							<p>
+																								{[
+																									book.author,
+																									book.publisher,
+																									book.publishYear,
+																								]
+																									.filter(Boolean)
+																									.join(" · ")}
+																							</p>
+																						</div>
+																						<small>
+																							{[
+																								book.stackLocation,
+																								book.stackShelf,
+																								book.holdingCallNo,
+																							]
+																								.filter(Boolean)
+																								.join(" · ") ||
+																								"위치 확인 필요"}
+																						</small>
+																					</div>
+																				))}
+																			</div>
+																		</div>
+																	)}
 															</>
 														)}
 													</div>
 
 													{msg.showDocInput && (
 														<div className="desk-document-wrap">
+															<div className="desk-document-toolbar">
+																<div>
+																	<span>문서 검토지</span>
+																	<p>
+																		전자결재 원문을 붙여넣고 기준에 맞춰
+																		점검합니다
+																	</p>
+																</div>
+																<div className="desk-document-actions">
+																	<button
+																		type="button"
+																		onClick={() =>
+																			setDocumentTemplate({
+																				id: Date.now(),
+																				text: DOCUMENT_REVIEW_SAMPLE,
+																			})
+																		}
+																	>
+																		샘플 불러오기
+																	</button>
+																	<button
+																		type="button"
+																		onClick={() =>
+																			setDocumentTemplate({
+																				id: Date.now(),
+																				text: "",
+																			})
+																		}
+																	>
+																		비우기
+																	</button>
+																</div>
+															</div>
 															<div className="desk-document-shell">
 																<aside className="desk-document-brief">
 																	<span className="desk-document-kicker">
-																		DOCUMENT REVIEW
+																		CHECKLIST
 																	</span>
-																	<h3>전자결재 문서를 붙여넣어 주세요</h3>
-																	<p>
-																		문서 검토는 일반 검색과 다르게 원문 구조,
-																		표, 결재 문구를 함께 확인합니다.
-																	</p>
-																	<ul>
-																		<li>공문 문체와 맞춤법 확인</li>
-																		<li>수정 제안과 확인 항목 분리</li>
-																		<li>표가 포함된 문서 구조 점검</li>
-																	</ul>
+																	<h3>검토 범위</h3>
+																	<div className="desk-document-checklist">
+																		<div>
+																			<strong>01</strong>
+																			<span>문서 구조</span>
+																			<p>
+																				수신, 제목, 본문, 붙임, 끝 표기 확인
+																			</p>
+																		</div>
+																		<div>
+																			<strong>02</strong>
+																			<span>공문 표현</span>
+																			<p>
+																				중복 표현, 구어체, 맞춤법, 날짜 표기
+																				점검
+																			</p>
+																		</div>
+																		<div>
+																			<strong>03</strong>
+																			<span>표와 붙임</span>
+																			<p>
+																				표 유지 여부와 첨부 문서 누락 가능성
+																				확인
+																			</p>
+																		</div>
+																	</div>
+																	<div className="desk-document-note">
+																		검토 결과는 수정 제안, 확인 필요 항목, 표
+																		검토로 분리되어 표시됩니다.
+																	</div>
 																</aside>
 																<div className="desk-document-editor">
+																	<div className="desk-document-paper-head">
+																		<span>원문 입력</span>
+																		<small>
+																			붙여넣은 표는 가능한 원형을 유지합니다
+																		</small>
+																	</div>
 																	<DocumentInput
+																		key={`${msg.id}-${documentTemplate.id}`}
 																		onSubmit={handleDocSubmit}
 																		isLoading={isLoading}
-																		initialText={msg.initialDocText}
+																		initialText={
+																			msg.initialDocText ??
+																			documentTemplate.text
+																		}
 																	/>
 																</div>
 															</div>
@@ -1280,9 +1462,24 @@ export default function ChatRedesignPage() {
 				<div className="desk-compose-inner">
 					<div className="desk-compose-box">
 						<textarea
+							ref={inputRef}
 							value={input}
-							onChange={(event) => setInput(event.target.value)}
+							onChange={(event) => {
+								if (clearingInputRef.current) {
+									event.currentTarget.value = "";
+									return;
+								}
+								setInput(event.target.value);
+							}}
+							onCompositionStart={() => {
+								composingRef.current = true;
+							}}
+							onCompositionEnd={() => {
+								composingRef.current = false;
+							}}
 							onKeyDown={(event) => {
+								if (event.nativeEvent.isComposing || composingRef.current)
+									return;
 								if (event.key === "Enter" && !event.shiftKey) {
 									event.preventDefault();
 									handleSend();
