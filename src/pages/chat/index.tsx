@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
 import type { Message, AgentType, ChatHistory, ConversationDetail } from '@/types/chat';
@@ -86,7 +86,7 @@ function renderMessageHtml(content: string): string {
       const safe = renderInlineMarkdown(line);
       if (safe.startsWith('### ')) return `<h3>${safe.slice(4)}</h3>`;
       if (safe.startsWith('## ')) return `<h2>${safe.slice(3)}</h2>`;
-      if (safe.startsWith('- ')) return `<p>${safe}</p>`;
+      if (safe.startsWith('- ')) return `<p class="desk-markdown-list">${safe.slice(2)}</p>`;
       if (!safe.trim()) return '<br />';
       return `<p>${safe}</p>`;
     })
@@ -185,7 +185,6 @@ function reviewResultMessageFromHistory(message: ConversationDetail['messages'][
   };
   const findings = review.findings ?? [];
   const checkRequiredItems = review.checkRequiredItems ?? [];
-  const extractedTables = review.extractedTables ?? [];
   const tableChecks = review.tableChecks ?? [];
   const revisedDocument = review.revisedDocument ?? {
     format: 'plain_text',
@@ -267,6 +266,36 @@ function tableCheckPenalty(tableChecks: DocumentReviewApiResponse['tableChecks']
     return sum + 1;
   }, 0);
 }
+
+const AGENT_META: Record<AgentType, {
+  desc: string;
+  scanColor: string;
+  department: string;
+  routeLabel: string;
+  answeringText: string;
+}> = {
+  main: {
+    desc: '학교 전반 질의를 통합 처리합니다',
+    scanColor: 'var(--agent-main)',
+    department: '통합 에이전트',
+    routeLabel: 'HSU',
+    answeringText: '통합에이전트가 답변중입니다.',
+  },
+  library: {
+    desc: '도서 검색, 대출/반납, 열람실 안내',
+    scanColor: 'var(--agent-library)',
+    department: '관리부서: 학술정보팀(02-760-4281)',
+    routeLabel: '학술',
+    answeringText: '학술정보관 에이전트가 답변중입니다.',
+  },
+  document: {
+    desc: '전자결재 기안문 형식 검토',
+    scanColor: 'var(--agent-document)',
+    department: '관리부서: 총무인사팀(전자결재)',
+    routeLabel: '기안',
+    answeringText: '전자결재 기안 에이전트가 답변중입니다.',
+  },
+};
 
 export default function ChatPage() {
   const location = useLocation();
@@ -523,17 +552,12 @@ export default function ChatPage() {
     await restoreConversation(id);
   };
 
-  const AGENT_META: Record<string, { desc: string; scanColor: string }> = {
-    main:     { desc: '학사, 공지, 시설, 행정 등 학교 전반 안내',     scanColor: 'var(--agent-main)' },
-    library:  { desc: '도서 검색, 대출/반납, 열람실, 학술DB 안내',    scanColor: 'var(--agent-library)' },
-    document: { desc: '공문서 형식 검토 및 구체적 수정 피드백 제공',  scanColor: 'var(--agent-document)' },
-  };
-
   const agentInfo = agentConfig[currentAgent];
   const hasMsg    = messages.length > 0;
+  const reviewMode = messages.some((message) => message.reviewScore !== undefined);
 
   return (
-    <div className="chat-page-bg" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div className="chat-page-bg chat-desk-scope" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
 
       {/* ── Header ── */}
       <header className="site-header chat-mode" style={{ display: 'flex', alignItems: 'center', padding: '0 32px', gap: 12 }}>
@@ -551,11 +575,7 @@ export default function ChatPage() {
         {/* Logo */}
         <button onClick={() => navigate('/')}
           style={{ border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span style={{ fontWeight: 900, fontSize: 42, color: 'var(--blue)', letterSpacing: '-0.05em' }}>HSU</span>
-          <div style={{ borderLeft: '2px solid var(--border-md)', paddingLeft: 16 }}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--blue-dark)', lineHeight: 1.3 }}>한성대학교</div>
-            <div style={{ fontSize: 14, color: 'var(--text-3)', letterSpacing: '0.06em', lineHeight: 1.3 }}>HANSUNG UNIVERSITY</div>
-          </div>
+          <img className="header-logo-img header-logo-img-chat" src="/hansung_logo.png" alt="한성대학교" />
         </button>
 
         <div style={{ flex: 1 }} />
@@ -586,7 +606,7 @@ export default function ChatPage() {
         flex: 1, overflowY: 'auto', padding: '24px 16px',
         marginTop: 100,
       }}>
-        <div style={{ maxWidth: messages.some((message) => message.reviewScore !== undefined) ? 1040 : 760, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div className={`desk-ledger ${reviewMode ? 'is-wide' : ''}`}>
 
           {/* Empty state */}
           {!hasMsg && (
@@ -642,111 +662,109 @@ export default function ChatPage() {
 
           {/* Messages */}
           {messages.map((msg) => (
-            <div key={msg.id} className="msg-wrapper"
-              style={{ display: 'flex', flexDirection: 'column',
-                alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: 6 }}
-            >
+            <article key={msg.id} className={`desk-entry desk-entry-${msg.role}`}>
               {/* User */}
               {msg.role === 'user' && (
-                <div className="msg-user">{msg.content}</div>
+                <div className="desk-user-note">{msg.content}</div>
               )}
 
               {/* AI */}
               {msg.role === 'assistant' && (
-                <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 0 }}>
-
+                <>
                   {/* ── Agent Discovery Card ── */}
-                    {msg.isAgentDiscovery && (() => {
-                      const type  = msg.agentType ?? 'main';
-                      const cfg   = agentConfig[type];
-                      const meta  = AGENT_META[type];
-                      if (msg.isSearching) {
-                        return (
-                          <div className="agent-discovery-card searching">
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <div style={{ display: 'flex', gap: 3 }}>
-                                <span className="dot" /><span className="dot" /><span className="dot" />
-                              </div>
-                              <span style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 500 }}>
-                                적합한 에이전트 탐색 중...
-                              </span>
-                            </div>
-                            <div className="scan-track">
-                              <div className="scan-fill" />
-                            </div>
-                          </div>
-                        );
-                      }
+                  {msg.isAgentDiscovery && (() => {
+                    const type  = msg.agentType ?? 'main';
+                    const cfg   = agentConfig[type];
+                    const meta  = AGENT_META[type];
+                    if (msg.isSearching) {
                       return (
-                        <div className={`agent-discovery-card found found-${type}`}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-                              <circle cx="6.5" cy="6.5" r="6.5" fill={meta.scanColor} fillOpacity="0.15"/>
-                              <path d="M3.5 6.5L5.5 8.5L9.5 4.5" stroke={meta.scanColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                            </svg>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: meta.scanColor, letterSpacing: '0.03em' }}>
-                              에이전트 연결 완료
-                            </span>
+                        <div className="agent-discovery-card searching">
+                          <div className="agent-route-status-line">
+                            <div style={{ display: 'flex', gap: 3 }}>
+                              <span className="dot" /><span className="dot" /><span className="dot" />
+                            </div>
+                            <span>에이전트 탐색중</span>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div style={{
-                              width: 36, height: 36, borderRadius: 9, flexShrink: 0,
-                              background: meta.scanColor, display: 'flex',
-                              alignItems: 'center', justifyContent: 'center',
-                              fontSize: 11, fontWeight: 800, color: '#fff', letterSpacing: '-0.02em',
-                            }}>
-                              {cfg.abbr}
-                            </div>
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.3 }}>
-                                {cfg.icon} {cfg.label}
-                              </div>
-                              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3, lineHeight: 1.4 }}>
-                                {meta.desc}
-                              </div>
-                            </div>
+                          <div className="scan-track">
+                            <div className="scan-fill" />
                           </div>
                         </div>
                       );
-                    })()}
-
-                    {/* 에이전트 인라인 헤더 */}
-                    {!msg.isAgentDiscovery && (
-                      <div className="msg-agent-header">
-                        <div
-                          className="msg-agent-icon"
-                          style={{ background: AGENT_META[msg.agentType ?? 'main'].scanColor }}
-                        >
-                          {agentConfig[msg.agentType ?? 'main'].abbr}
+                    }
+                    return (
+                      <div className={`agent-discovery-card found found-${type}`}>
+                        <div className="agent-route-status-line" style={{ color: meta.scanColor }}>
+                          <span className="agent-route-check-dot" style={{ background: meta.scanColor }} />
+                          <span>에이전트 연결 완료</span>
                         </div>
-                        <span className="msg-agent-name">
-                          {agentConfig[msg.agentType ?? 'main'].label}
-                        </span>
+                        <div className="agent-route-summary">
+                          <div className="agent-route-line">
+                            <strong>{cfg.label}</strong>
+                            <span>{meta.department}</span>
+                          </div>
+                        </div>
                       </div>
-                    )}
+                    );
+                  })()}
 
-                    {/* Bubble */}
-                    {!msg.isAgentDiscovery && (
-                      <div className={`msg-ai msg-ai-${msg.agentType ?? 'main'}`}>
+                  {/* Answer card */}
+                  {!msg.isAgentDiscovery && (() => {
+                    const type = msg.agentType ?? 'main';
+                    const meta = AGENT_META[type];
+                    const cfg = agentConfig[type];
+                    return (
+                      <div
+                        className="desk-answer-card"
+                        data-route={meta.routeLabel}
+                        style={{ '--desk-accent': meta.scanColor } as CSSProperties}
+                      >
+                        <div className="desk-answer-head">
+                          <div className="msg-agent-header">
+                            <span className="msg-agent-name">{cfg.label}</span>
+                            <span className="msg-agent-department">{meta.department}</span>
+                          </div>
+                          <small>
+                            {msg.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                          </small>
+                        </div>
                         {msg.isTyping ? (
-                          <div style={{ display: 'flex', gap: 4, padding: '2px 0' }}>
-                            <span className="dot" /><span className="dot" /><span className="dot" />
+                          <div className="desk-answer-loading">
+                            <span /><span /><span />
+                            <p>{meta.answeringText}</p>
                           </div>
                         ) : (
-                          <div className="chat-markdown" dangerouslySetInnerHTML={{ __html: renderMessageHtml(msg.content) }} />
+                          <div className="desk-markdown" dangerouslySetInnerHTML={{ __html: renderMessageHtml(msg.content) }} />
                         )}
                       </div>
-                    )}
-                    {/* Doc input widget */}
-                    {msg.showDocInput && (
-                      <DocumentInput
-                        onSubmit={handleDocSubmit}
-                        isLoading={isLoading}
-                        initialText={msg.initialDocText}
-                      />
-                    )}
-                    {/* Review result */}
-                    {msg.reviewScore !== undefined && (
+                    );
+                  })()}
+                  {/* Doc input widget */}
+                  {msg.showDocInput && (
+                    <div className="desk-document-wrap">
+                      <div className="desk-document-shell">
+                        <aside className="desk-document-brief">
+                          <span className="desk-document-kicker">DOCUMENT REVIEW</span>
+                          <h3>전자결재 문서를 붙여넣어 주세요</h3>
+                          <p>기안문 본문과 표 구조를 함께 읽고, 자동 수정 제안과 직접 확인 항목을 분리해 안내합니다.</p>
+                          <ul>
+                            <li>전자결재 작성 규칙 검토</li>
+                            <li>본문과 표 금액 교차 확인</li>
+                            <li>수정 전후 비교 화면 제공</li>
+                          </ul>
+                        </aside>
+                        <div className="desk-document-editor">
+                          <DocumentInput
+                            onSubmit={handleDocSubmit}
+                            isLoading={isLoading}
+                            initialText={msg.initialDocText}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {/* Review result */}
+                  {msg.reviewScore !== undefined && (
+                    <div className="desk-review-wrap">
                       <ReviewResult
                         score={msg.reviewScore}
                         originalText={msg.originalText}
@@ -754,15 +772,13 @@ export default function ChatPage() {
                         correctedText={msg.correctedText ?? ''}
                         correctedHtml={msg.correctedHtml}
                         copyNotice={msg.copyNotice}
-                        tableChecks={msg.tableChecks}
-                        tableChecksAvailable={msg.tableChecksAvailable}
-                        stripTablesOnCopy={msg.stripTablesOnCopy}
                         feedbackText={msg.feedbackText ?? ''}
                       />
-                    )}
-                </div>
+                    </div>
+                  )}
+                </>
               )}
-            </div>
+            </article>
           ))}
 
           <div ref={bottomRef} />

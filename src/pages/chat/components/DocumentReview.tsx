@@ -230,44 +230,6 @@ function sanitizeClipboardDocument(doc: Document): void {
   });
 }
 
-function mergeStyle(element: HTMLElement, declarations: Record<string, string>): void {
-  const existing = element.getAttribute('style') ?? '';
-  const scratch = document.createElement(element.tagName.toLowerCase());
-  scratch.setAttribute('style', existing);
-  Object.entries(declarations).forEach(([property, value]) => {
-    scratch.style.setProperty(property, value);
-  });
-  const merged = scratch.getAttribute('style');
-  if (merged) {
-    element.setAttribute('style', merged);
-  }
-}
-
-function normalizeHtmlForClipboard(html: string): string {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  sanitizeClipboardDocument(doc);
-  doc.querySelectorAll('table').forEach((table) => {
-    if (!table.hasAttribute('border')) table.setAttribute('border', '1');
-    if (!table.hasAttribute('cellspacing')) table.setAttribute('cellspacing', '0');
-    if (!table.hasAttribute('cellpadding')) table.setAttribute('cellpadding', '4');
-    mergeStyle(table, {
-      'border-collapse': 'collapse',
-    });
-  });
-  doc.querySelectorAll('th,td').forEach((cell) => {
-    cell.removeAttribute('width');
-    mergeStyle(cell as HTMLElement, {
-      border: '1px solid #000000',
-      padding: '4px 8px',
-      'vertical-align': 'top',
-      ...(!cell.querySelector('br') && cell.textContent?.includes('\n')
-        ? { 'white-space': 'pre-wrap' }
-        : {}),
-    });
-  });
-  return `<!doctype html><html><head><meta charset="utf-8">${doc.head.innerHTML}</head><body>${doc.body.innerHTML}</body></html>`;
-}
-
 function sanitizeHtmlForClipboard(html: string): string {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   sanitizeClipboardDocument(doc);
@@ -518,9 +480,6 @@ export function ReviewResult({
   feedbackText,
   correctedHtml,
   copyNotice,
-  tableChecks = [],
-  tableChecksAvailable = false,
-  stripTablesOnCopy = false,
 }: ResultProps) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
