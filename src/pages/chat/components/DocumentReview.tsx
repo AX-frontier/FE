@@ -106,10 +106,6 @@ function htmlToText(html: string): string {
   return extractTextPreservingSpaces(doc.body);
 }
 
-function countTables(html: string): number {
-  return new DOMParser().parseFromString(html, 'text/html').querySelectorAll('table').length;
-}
-
 function inspectClipboardHtml(types: string[], html: string, plain: string): PasteDiagnostics {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const tables = Array.from(doc.querySelectorAll('table'));
@@ -260,8 +256,6 @@ function buildDocumentPreviewHtml(html: string, stripTables: boolean): string {
 export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) {
   const showPasteDiagnostics = import.meta.env.DEV;
   const [textLength, setTextLength] = useState(0);
-  const [tableCount, setTableCount] = useState(0);
-  const [pasteInfo, setPasteInfo] = useState('아직 붙여넣기 없음');
   const [pasteDiagnostics, setPasteDiagnostics] = useState<PasteDiagnostics | null>(null);
   const [rawClipboardHtml, setRawClipboardHtml] = useState<string | null>(null);
   const [rawCopyStatus, setRawCopyStatus] = useState<string | null>(null);
@@ -277,7 +271,6 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
     onUpdate: ({ editor: currentEditor }) => {
       const html = currentEditor.getHTML();
       setTextLength(htmlToText(html).length);
-      setTableCount(countTables(html));
     },
     editorProps: {
       handlePaste: (_view, event) => {
@@ -289,11 +282,6 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
         if (showPasteDiagnostics) {
           setPasteDiagnostics(inspectClipboardHtml(types, html, plain));
         }
-        setPasteInfo(
-          html.includes('<table')
-            ? `HTML 표 감지됨 (${types.join(', ')})`
-            : `표 HTML 없음 (${types.join(', ') || 'unknown'})`
-        );
         return false;
       },
     },
@@ -359,8 +347,8 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
         padding: '10px 14px', borderTop: '1px solid var(--border)',
       }}>
         <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-          {textLength}자 · 표 {tableCount}개 · {pasteInfo}
-          {rawClipboardHtml ? ' · 원본 HTML 보존됨' : ''}
+          {textLength}자
+          {rawClipboardHtml ? ' · 원본 서식 보존' : ''}
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {showPasteDiagnostics && rawClipboardHtml && (
