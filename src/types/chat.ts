@@ -1,67 +1,67 @@
-export type AgentType = 'main' | 'library' | 'document';
+export type AgentType = "main" | "library" | "document" | "map";
 
 export interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  agentType?: AgentType;
-  timestamp: Date;
-  isTyping?: boolean;
-  isAgentDiscovery?: boolean;
-  isSearching?: boolean;
-  documentReview?: DocumentReviewResult;
+	id: string;
+	role: "user" | "assistant";
+	content: string;
+	agentType?: AgentType;
+	timestamp: Date;
+	isTyping?: boolean;
+	isAgentDiscovery?: boolean;
+	isSearching?: boolean;
+	documentReview?: DocumentReviewResult;
 }
 
 export interface DocumentReviewResult {
-  score: number;
-  highlights: HighlightItem[];
-  sections: {
-    header: SectionReview;
-    body: SectionReview;
-    footer: SectionReview;
-  };
-  correctedText: string;
+	score: number;
+	highlights: HighlightItem[];
+	sections: {
+		header: SectionReview;
+		body: SectionReview;
+		footer: SectionReview;
+	};
+	correctedText: string;
 }
 
 export interface HighlightItem {
-  text: string;
-  type: 'error' | 'warning' | 'ok';
-  message: string;
+	text: string;
+	type: "error" | "warning" | "ok";
+	message: string;
 }
 
 export interface SectionReview {
-  status: 'ok' | 'warning' | 'error';
-  label: string;
-  description: string;
+	status: "ok" | "warning" | "error";
+	label: string;
+	description: string;
 }
 
 export interface ChatHistory {
-  id: string;
-  title: string;
-  lastMessage: string;
-  timestamp: Date;
-  messageCount?: number;
+	id: string;
+	title: string;
+	lastMessage: string;
+	timestamp: Date;
+	messageCount?: number;
 }
 
 export interface ConversationListItem {
-  conversationUid: string;
-  title: string;
-  lastMessagePreview: string | null;
-  messageCount: number;
-  updatedAt: string;
+	conversationUid: string;
+	title: string;
+	lastMessagePreview: string | null;
+	messageCount: number;
+	updatedAt: string;
 }
 
 export interface ConversationMessage {
-  role: 'user' | 'assistant';
-  queryUid: string;
-  content: string;
-  createdAt: string;
-  metadata?: Record<string, unknown>;
+	role: "user" | "assistant";
+	queryUid: string;
+	content: string;
+	createdAt: string;
+	metadata?: Record<string, unknown>;
 }
 
 export interface ConversationDetail {
-  conversationUid: string;
-  title: string;
-  createdAt: string;
-  messages: ConversationMessage[];
+	conversationUid: string;
+	title: string;
+	createdAt: string;
+	messages: ConversationMessage[];
 }

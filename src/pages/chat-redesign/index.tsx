@@ -13,7 +13,10 @@ import {
 	reviewDocument,
 	sendQueryToSpringStream,
 } from "@/utils/aiService";
-import type { DocumentReviewApiResponse } from "@/utils/aiService";
+import type {
+	ClientLocationPayload,
+	DocumentReviewApiResponse,
+} from "@/utils/aiService";
 import {
 	BookOpen,
 	ClipboardCheck,
@@ -29,6 +32,10 @@ import {
 	type DocumentSubmitPayload,
 	ReviewResult,
 } from "../chat/components/DocumentReview";
+import CampusMapCard, {
+	campusMapResultFromUnknown,
+	type CampusMapResult,
+} from "./components/CampusMapCard";
 import "./chatRedesign.css";
 
 type DisplayMessage = Message & {
@@ -49,6 +56,7 @@ type DisplayMessage = Message & {
 	bookMatches?: BookMatch[];
 	searchKeyword?: string | null;
 	resultCount?: number | null;
+	mapResult?: CampusMapResult;
 };
 
 const ACTIVE_CONVERSATION_KEY = "hansung-ai.activeConversationUid";
@@ -106,6 +114,11 @@ const DESK_META: Record<
 		label: "문서 검토 에이전트",
 		description: "전자결재 문서의 표현, 형식, 표 유지 여부를 점검합니다",
 		color: "#4F5D95",
+	},
+	map: {
+		label: "캠퍼스 맵",
+		description: "건물 위치, 출입구, 캠퍼스 보행 경로를 안내합니다",
+		color: "#0F766E",
 	},
 };
 
@@ -179,7 +192,11 @@ function renderMessageHtml(content: string): string {
 }
 
 function sourceLinksFromSources(sources: unknown): SourceLink[] {
-	if (!Array.isArray(sources)) return [];
+	if (!Array.isArray(sources)) {
+		const nested = asRecord(sources)?.sources;
+		if (!Array.isArray(nested)) return [];
+		return sourceLinksFromSources(nested);
+	}
 	return sources
 		.map((source, index): SourceLink | null => {
 			if (!source || typeof source !== "object") return null;
@@ -291,7 +308,52 @@ function formatClock(date: Date): string {
 function loadingCopyForAgent(agent: AgentType): string {
 	if (agent === "library") return "학술정보관 정보를 확인하고 있어요";
 	if (agent === "document") return "문서 검토 방식으로 준비하고 있어요";
+	if (agent === "map") return "캠퍼스 위치와 보행 경로를 확인하고 있어요";
 	return "담당 안내 정보를 확인하고 있어요";
+}
+
+function agentFromTargetAgent(value: unknown, fallback: AgentType): AgentType {
+	const raw = String(value ?? fallback).toLowerCase();
+	if (raw === "document_review") return "document";
+	if (raw === "campus_map") return "map";
+	if (
+		raw === "library" ||
+		raw === "document" ||
+		raw === "main" ||
+		raw === "map"
+	) {
+		return raw;
+	}
+	return fallback;
+}
+
+function shouldRequestClientLocation(message: string): boolean {
+	return (
+		(message.includes("내 위치") || message.includes("현재 위치")) &&
+		["가는 길", "가는길", "길찾기", "어떻게", "까지"].some((keyword) =>
+			message.includes(keyword),
+		)
+	);
+}
+
+function resolveClientLocation(
+	message: string,
+): Promise<ClientLocationPayload | null> {
+	if (!shouldRequestClientLocation(message) || !navigator.geolocation) {
+		return Promise.resolve(null);
+	}
+	return new Promise((resolve) => {
+		navigator.geolocation.getCurrentPosition(
+			(position) =>
+				resolve({
+					latitude: position.coords.latitude,
+					longitude: position.coords.longitude,
+					accuracy: position.coords.accuracy,
+				}),
+			() => resolve(null),
+			{ enableHighAccuracy: true, maximumAge: 60_000, timeout: 4_000 },
+		);
+	});
 }
 
 function demoAnswerFor(text: string): {
@@ -519,11 +581,40 @@ function toDisplayMessages(detail: ConversationDetail): DisplayMessage[] {
 							message.content,
 						)
 					: undefined,
+			mapResult:
+				message.role === "assistant"
+					? campusMapResultFromUnknown(message.metadata?.mapResult)
+					: undefined,
 		};
 	});
 }
 
 function detectAgentFromText(content: string): AgentType {
+	const mapKeywords = [
+		"어디",
+		"위치",
+		"가는 길",
+		"가는길",
+		"길찾기",
+		"출입구",
+		"정문",
+		"후문",
+	];
+	const campusPlaces = [
+		"상상관",
+		"학생회관",
+		"공학관",
+		"미래관",
+		"탐구관",
+		"진리관",
+		"창의관",
+		"우촌관",
+		"인성관",
+		"낙산관",
+		"도서관",
+		"학술정보관",
+	];
+	const bookLocationKeywords = ["책", "도서", "청구기호", "서가", "소장"];
 	const libraryKeywords = [
 		"도서관",
 		"학술정보관",
@@ -534,6 +625,12 @@ function detectAgentFromText(content: string): AgentType {
 		"열람실",
 	];
 	const documentKeywords = ["결재", "문서", "기안", "공문", "검토", "검수"];
+	if (
+		mapKeywords.some((keyword) => content.includes(keyword)) &&
+		campusPlaces.some((keyword) => content.includes(keyword)) &&
+		!bookLocationKeywords.some((keyword) => content.includes(keyword))
+	)
+		return "map";
 	if (documentKeywords.some((keyword) => content.includes(keyword)))
 		return "document";
 	if (libraryKeywords.some((keyword) => content.includes(keyword)))
@@ -764,16 +861,15 @@ export default function ChatRedesignPage() {
 			let streamingStarted = false;
 			let receivedTerminalEvent = false;
 			let resolvedAgent: AgentType = currentAgent;
+			const clientLocation = await resolveClientLocation(text);
 
 			for await (const event of sendQueryToSpringStream(
 				text,
 				targetConversationUid,
+				{ clientLocation },
 			)) {
 				if (event.type === "routing") {
-					const raw = event.targetAgent.toLowerCase();
-					const agent = (
-						raw === "document_review" ? "document" : raw
-					) as AgentType;
+					const agent = agentFromTargetAgent(event.targetAgent, resolvedAgent);
 					resolvedAgent = agent;
 					setCurrentAgent(agent);
 					setMessages((previous) =>
@@ -815,12 +911,7 @@ export default function ChatRedesignPage() {
 					}
 				} else if (event.type === "done") {
 					receivedTerminalEvent = true;
-					const raw = (event.targetAgent ?? resolvedAgent)
-						.toString()
-						.toLowerCase();
-					const agent = (
-						raw === "document_review" ? "document" : raw
-					) as AgentType;
+					const agent = agentFromTargetAgent(event.targetAgent, resolvedAgent);
 					setCurrentAgent(agent);
 					setMessages((previous) =>
 						previous.map((message) =>
@@ -850,6 +941,7 @@ export default function ChatRedesignPage() {
 											showDocInput: true,
 											sourceLinks,
 											bookMatches,
+											mapResult: campusMapResultFromUnknown(event.mapResult),
 											searchKeyword:
 												typeof event.searchKeyword === "string"
 													? event.searchKeyword
@@ -872,6 +964,9 @@ export default function ChatRedesignPage() {
 											const bookMatches = bookMatchesFromUnknown(
 												event.matchedBooks,
 											);
+											const mapResult = campusMapResultFromUnknown(
+												event.mapResult,
+											);
 											return {
 												...message,
 												agentType: agent,
@@ -883,6 +978,7 @@ export default function ChatRedesignPage() {
 													answer,
 												),
 												bookMatches,
+												mapResult,
 												searchKeyword:
 													typeof event.searchKeyword === "string"
 														? event.searchKeyword
@@ -1335,6 +1431,9 @@ export default function ChatRedesignPage() {
 																			</div>
 																		</div>
 																	)}
+																{msg.mapResult && (
+																	<CampusMapCard result={msg.mapResult} />
+																)}
 															</>
 														)}
 													</div>
