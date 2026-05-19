@@ -6,8 +6,6 @@ import {
 	Briefcase,
 	Building2,
 	CalendarDays,
-	ChevronLeft,
-	ChevronRight,
 	ExternalLink,
 	FileCheck,
 	FlaskConical,
@@ -81,41 +79,60 @@ const MENUS: { id: number; Icon: LucideIcon; label: string; url: string }[] = [
 
 const NEWS = [
 	{
-		cat: "공지사항",
-		title: "2026학년도 하계 계절학기 운영 계획 안내",
+		cat: "한성소식",
+		title: "총장 소개 및 대학 비전",
 		content:
-			"2026학년도 하계 계절학기 수강신청 및 운영 일정을 안내드립니다. 수강 가능 학점 및 수강료 등 세부 사항을 반드시 확인하시기 바랍니다.",
-		date: "2026.04.12",
+			"한성대학교의 교육 방향과 대학 운영 비전을 한눈에 확인할 수 있는 총장 소개 콘텐츠입니다.",
+		date: "2026.02.09",
 		color: "#003DA5",
+		image: "/hansung-news/president.png",
 	},
 	{
-		cat: "학사",
-		title: "제35회 학위수여식 개최 안내",
+		cat: "홍보갤러리",
+		title: "상상홀 캠퍼스 이미지",
 		content:
-			"2026년 2월 제35회 학위수여식이 창의인재관 대강당에서 개최되었습니다. 졸업생 여러분의 앞날을 진심으로 축하드립니다.",
-		date: "2026.04.08",
+			"한성대학교 캠퍼스와 학생 활동 분위기를 담은 공식 홍보 이미지입니다.",
+		date: "2021.10.28",
 		color: "#0B6E4F",
+		image: "/hansung-news/news-01.jpg",
 	},
 	{
-		cat: "취업",
-		title: "2026 상반기 채용박람회 참가기업 안내",
+		cat: "홍보갤러리",
+		title: "한성 홍보대사 연출 이미지",
 		content:
-			"2026년 상반기 한성대학교 채용박람회 참가기업을 안내드립니다. 다양한 분야의 우수 기업이 참여하오니 많은 관심 바랍니다.",
-		date: "2026.04.05",
+			"공식 홍보갤러리에서 제공되는 한성대학교 구성원 중심의 캠퍼스 이미지입니다.",
+		date: "2021.10.28",
 		color: "#6B3A0F",
+		image: "/hansung-news/news-02.jpg",
 	},
 	{
-		cat: "장학",
-		title: "2026학년도 1학기 교내 장학금 신청 안내",
+		cat: "캠퍼스",
+		title: "잔디광장과 캠퍼스 라이프",
 		content:
-			"2026학년도 1학기 교내 장학금 신청을 받고 있습니다. 장학 종류별 신청 자격 및 제출 서류를 꼼꼼히 확인하신 후 기간 내 신청하시기 바랍니다.",
-		date: "2026.04.01",
+			"한성대학교 잔디광장과 학내 공간을 배경으로 한 공식 홍보 이미지입니다.",
+		date: "2021.10.28",
 		color: "#003DA5",
+		image: "/hansung-news/news-03.jpg",
+	},
+	{
+		cat: "캠퍼스",
+		title: "한성의 일상과 학내 풍경",
+		content:
+			"학교 소식 영역에서 자연스럽게 순환 노출할 수 있는 캠퍼스 이미지 콘텐츠입니다.",
+		date: "2021.10.28",
+		color: "#0050CC",
+		image: "/hansung-news/news-04.jpg",
 	},
 ];
 
-const PER_PAGE = 6;
-const PAGES = Math.ceil(MENUS.length / PER_PAGE);
+const RECOMMENDED_QUERIES = [
+	"복수전공 신청 기간 알려줘",
+	"학술정보관 오늘 몇 시까지 해?",
+	"장학금 신청 방법 알려줘",
+	"전자결재 기안문 검토해줘",
+	"수강신청 정정 기간 알려줘",
+];
+
 const ACTIVE_CONVERSATION_KEY = "hansung-ai.activeConversationUid";
 
 function toHistoryItem(item: {
@@ -137,7 +154,6 @@ function toHistoryItem(item: {
 export default function HomePage() {
 	const navigate = useNavigate();
 	const [q, setQ] = useState("");
-	const [page, setPage] = useState(0);
 	const [showGrid, setGrid] = useState(false);
 	const [newsIdx, setNewsIdx] = useState(0);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -191,7 +207,15 @@ export default function HomePage() {
 		return () => clearInterval(t);
 	}, [showGrid]);
 
-	const slice = MENUS.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
+	useEffect(() => {
+		if (!showGrid) return;
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setGrid(false);
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [showGrid]);
+
 	const news = NEWS[newsIdx];
 
 	return (
@@ -233,15 +257,15 @@ export default function HomePage() {
 			/>
 
 			{/* ── Floating legacy homepage button ── */}
-			<a
-				href="https://www.hansung.ac.kr"
-				target="_blank"
-				rel="noopener noreferrer"
-				className="floating-legacy-btn"
+			<button
+				type="button"
+				className="floating-legacy-btn floating-quick-btn"
+				onClick={() => setGrid((value) => !value)}
+				aria-label={showGrid ? "퀵메뉴 닫기" : "퀵메뉴 열기"}
 			>
-				<ExternalLink size={14} />
-				기존 홈페이지
-			</a>
+				{showGrid ? <X size={14} /> : <DotsGrid size={16} />}
+				퀵메뉴
+			</button>
 
 			{/* ── Header ── */}
 			<header className="site-header" style={{ zIndex: 100 }}>
@@ -263,66 +287,22 @@ export default function HomePage() {
 						>
 							<Menu size={18} />
 						</button>
-						<span
-							className="header-hsu"
-							style={{
-								fontWeight: 900,
-								fontSize: 42,
-								letterSpacing: "-0.05em",
-							}}
-						>
-							HSU
-						</span>
-						<div className="header-divider" style={{ paddingLeft: 16 }}>
-							<div
-								className="header-name"
-								style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.3 }}
-							>
-								한성대학교
-							</div>
-							<div
-								className="header-en"
-								style={{
-									fontSize: 14,
-									letterSpacing: "0.06em",
-									lineHeight: 1.3,
-								}}
-							>
-								HANSUNG UNIVERSITY
-							</div>
-						</div>
+						<img
+							className="header-logo-img"
+							src="/hansung_logo.png"
+							alt="한성대학교"
+						/>
 					</div>
 					<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-						<button
-							className="header-login"
-							style={{
-								fontSize: 14,
-								background: "none",
-								border: "none",
-								cursor: "pointer",
-								padding: "7px 14px",
-								borderRadius: 6,
-								fontFamily: "inherit",
-								fontWeight: 500,
-							}}
-							onMouseEnter={(e) =>
-								(e.currentTarget.style.background = "rgba(255,255,255,0.15)")
-							}
-							onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+						<a
+							href="https://www.hansung.ac.kr"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="header-legacy-link"
 						>
-							로그인
-						</button>
-						<button
-							className="btn-blue"
-							style={{
-								fontSize: 14,
-								padding: "7px 16px",
-								borderRadius: 6,
-								fontFamily: "inherit",
-							}}
-						>
-							발전기금
-						</button>
+							<ExternalLink size={14} />
+							기존 홈페이지
+						</a>
 					</div>
 				</div>
 			</header>
@@ -335,6 +315,53 @@ export default function HomePage() {
 				onNewChat={handleNewChat}
 				activeId={activeConversationUid}
 			/>
+
+			{showGrid && (
+				<div
+					className="quick-modal-backdrop"
+					onClick={() => setGrid(false)}
+					role="presentation"
+				>
+					<div
+						className="quick-modal"
+						onClick={(event) => event.stopPropagation()}
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="quick-modal-title"
+					>
+						<div className="quick-modal-header">
+							<div>
+								<div className="quick-modal-kicker">HANSUNG SHORTCUT</div>
+								<h2 id="quick-modal-title">퀵메뉴</h2>
+							</div>
+							<button
+								type="button"
+								className="quick-modal-close"
+								onClick={() => setGrid(false)}
+								aria-label="퀵메뉴 닫기"
+							>
+								<X size={18} />
+							</button>
+						</div>
+						<div className="quick-modal-grid">
+							{MENUS.map((item) => (
+								<a
+									key={item.id}
+									href={item.url}
+									className="quick-modal-card"
+									target={item.url === "#" ? undefined : "_blank"}
+									rel={item.url === "#" ? undefined : "noopener noreferrer"}
+								>
+									<span className="quick-modal-icon">
+										<item.Icon size={22} strokeWidth={1.7} />
+									</span>
+									<span>{item.label}</span>
+								</a>
+							))}
+						</div>
+					</div>
+				</div>
+			)}
 
 			{/* ── Main content (centered column) ── */}
 			<div
@@ -353,38 +380,16 @@ export default function HomePage() {
 				{/* Search bar */}
 				<div style={{ width: "100%", maxWidth: 680, padding: "0 16px" }}>
 					<div className="search-wrap">
-						<button
-							onClick={() => setGrid((v) => !v)}
-							title={showGrid ? "닫기" : "빠른 메뉴"}
-							style={{
-								padding: "0 16px",
-								height: 62,
-								border: "none",
-								background: "none",
-								cursor: "pointer",
-								color: showGrid ? "var(--blue)" : "var(--text-3)",
-								display: "flex",
-								alignItems: "center",
-								flexShrink: 0,
-								transition: "color 0.12s",
-							}}
-						>
-							{showGrid ? <X size={18} /> : <DotsGrid size={18} />}
-						</button>
-						<div
-							style={{
-								width: 1,
-								height: 22,
-								background: "var(--border)",
-								flexShrink: 0,
-							}}
-						/>
+						<div className="home-ai-search-label">
+							<span className="home-ai-search-mark">AI</span>
+							<span>검색</span>
+						</div>
 						<input
 							ref={inputRef}
 							value={q}
 							onChange={(e) => setQ(e.target.value)}
 							onKeyDown={(e) => e.key === "Enter" && go()}
-							placeholder="궁금한 정보를 질문해 보세요"
+							placeholder="학사, 도서관, 기안문까지 한 번에 질문해 보세요"
 							style={{
 								flex: 1,
 								height: 62,
@@ -419,7 +424,22 @@ export default function HomePage() {
 					</div>
 				</div>
 
-				{/* Below search: news slideshow OR menu grid */}
+				<div className="home-recommend-marquee" aria-label="추천 검색어">
+					<div className="home-recommend-track">
+						{[...RECOMMENDED_QUERIES, ...RECOMMENDED_QUERIES].map((query, index) => (
+							<button
+								key={`${query}-${index}`}
+								type="button"
+								className="home-recommend-chip"
+								onClick={() => go(query)}
+							>
+								{query}
+							</button>
+						))}
+					</div>
+				</div>
+
+				{/* Below search: news slideshow */}
 				<div
 					style={{
 						width: "100%",
@@ -428,157 +448,27 @@ export default function HomePage() {
 						marginTop: 28,
 					}}
 				>
-					{showGrid ? (
-						/* ── Menu grid (glassmorphism) ── */
-						<div
-							className="anim-fade-up"
-							style={{
-								background: "rgba(255,255,255,0.10)",
-								backdropFilter: "blur(16px)",
-								WebkitBackdropFilter: "blur(16px)",
-								border: "1px solid rgba(255,255,255,0.18)",
-								borderRadius: 16,
-								padding: "20px 16px 16px",
-							}}
-						>
-							<div
-								style={{
-									display: "grid",
-									gridTemplateColumns: "repeat(6,1fr)",
-									gap: 4,
-									marginBottom: 14,
-								}}
-							>
-								{slice.map((item) => (
-									<a
-										key={item.id}
-										href={item.url}
-										style={{ textDecoration: "none" }}
-									>
-										<div
-											className="qmenu-card"
-											style={{ borderRadius: 10, padding: "8px 4px" }}
-											onMouseEnter={(e) =>
-												(e.currentTarget.style.background =
-													"rgba(255,255,255,0.14)")
-											}
-											onMouseLeave={(e) =>
-												(e.currentTarget.style.background = "transparent")
-											}
-										>
-											<div
-												style={{
-													width: 44,
-													height: 44,
-													borderRadius: 10,
-													background: "rgba(255,255,255,0.14)",
-													display: "flex",
-													alignItems: "center",
-													justifyContent: "center",
-												}}
-											>
-												<item.Icon
-													size={22}
-													color="rgba(255,255,255,0.9)"
-													strokeWidth={1.5}
-												/>
-											</div>
-											<span
-												style={{
-													fontSize: 11,
-													color: "rgba(255,255,255,0.82)",
-													textAlign: "center",
-													lineHeight: 1.3,
-												}}
-											>
-												{item.label}
-											</span>
-										</div>
-									</a>
-								))}
-							</div>
-							{/* Pagination */}
-							<div
-								style={{
-									display: "flex",
-									alignItems: "center",
-									justifyContent: "center",
-									gap: 12,
-								}}
-							>
-								<button
-									onClick={() => setPage((p) => Math.max(0, p - 1))}
-									disabled={page === 0}
-									style={{
-										border: "none",
-										background: "none",
-										cursor: "pointer",
-										color: "rgba(255,255,255,0.6)",
-										padding: 4,
-										display: "flex",
-										alignItems: "center",
-										opacity: page === 0 ? 0.3 : 1,
-									}}
-								>
-									<ChevronLeft size={15} />
-								</button>
-								<div style={{ display: "flex", gap: 6 }}>
-									{Array.from({ length: PAGES }).map((_, i) => (
-										<button
-											key={i}
-											onClick={() => setPage(i)}
-											style={{
-												border: "none",
-												cursor: "pointer",
-												borderRadius: 99,
-												transition: "all 0.15s",
-												width: page === i ? 20 : 6,
-												height: 6,
-												background:
-													page === i ? "#fff" : "rgba(255,255,255,0.35)",
-												padding: 0,
-											}}
-										/>
-									))}
-								</div>
-								<button
-									onClick={() => setPage((p) => Math.min(PAGES - 1, p + 1))}
-									disabled={page === PAGES - 1}
-									style={{
-										border: "none",
-										background: "none",
-										cursor: "pointer",
-										color: "rgba(255,255,255,0.6)",
-										padding: 4,
-										display: "flex",
-										alignItems: "center",
-										opacity: page === PAGES - 1 ? 0.3 : 1,
-									}}
-								>
-									<ChevronRight size={15} />
-								</button>
-							</div>
-						</div>
-					) : (
-						/* ── 한성소식 slideshow ── */
-						<div
-							key={newsIdx}
-							className="anim-news"
-							style={{
-								display: "flex",
-								gap: 20,
-								alignItems: "stretch",
-								cursor: "pointer",
-							}}
-							onClick={() => setNewsIdx((i) => (i + 1) % NEWS.length)}
-						>
+					{/* ── 한성소식 slideshow ── */}
+					<div
+						key={newsIdx}
+						className="anim-news"
+						style={{
+							display: "flex",
+							gap: 20,
+							alignItems: "stretch",
+							cursor: "pointer",
+						}}
+						onClick={() => setNewsIdx((i) => (i + 1) % NEWS.length)}
+					>
 							{/* Left: image frame */}
 							<div
 								style={{
 									width: 220,
 									flexShrink: 0,
 									borderRadius: 14,
-									background: `linear-gradient(140deg, ${news.color}cc 0%, ${news.color}55 100%)`,
+									backgroundImage: `linear-gradient(140deg, ${news.color}55 0%, rgba(0,0,0,0.1) 100%), url(${news.image})`,
+									backgroundSize: "cover",
+									backgroundPosition: "center",
 									backdropFilter: "blur(4px)",
 									border: "1px solid rgba(255,255,255,0.18)",
 									position: "relative",
@@ -706,8 +596,7 @@ export default function HomePage() {
 									))}
 								</div>
 							</div>
-						</div>
-					)}
+					</div>
 				</div>
 			</div>
 		</div>
