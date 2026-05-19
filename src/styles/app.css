@@ -439,6 +439,357 @@ body {
   text-align: right;
 }
 
+.chat-desk-scope .campus-map-card {
+  margin-top: 24px;
+  border-top: 1px solid rgba(0, 32, 96, 0.07);
+  padding-top: 18px;
+}
+
+.chat-desk-scope .campus-map-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.chat-desk-scope .campus-map-head div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.chat-desk-scope .campus-map-head span {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+}
+
+.chat-desk-scope .campus-map-head strong {
+  color: #172033;
+  font-size: 16px;
+  font-weight: 950;
+  letter-spacing: -0.03em;
+}
+
+.chat-desk-scope .campus-route-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  border-radius: 999px;
+  background: rgba(240, 253, 250, 0.9);
+  color: #0f766e;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.chat-desk-scope .campus-map-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chat-desk-scope .campus-map-stage {
+  overflow: hidden;
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  border-radius: 8px;
+  background: #f8fafc;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.chat-desk-scope .campus-map-stage svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: min(72vh, 760px);
+}
+
+.chat-desk-scope .campus-building {
+  fill: #2f363b;
+  stroke: rgba(255, 255, 255, 0.72);
+  stroke-width: 2;
+  transition: fill 0.16s ease, stroke 0.16s ease, filter 0.16s ease;
+}
+
+.chat-desk-scope .campus-building[data-category="gate"] {
+  fill: #dbeafe;
+  stroke: #60a5fa;
+}
+
+.chat-desk-scope .campus-building[data-category="outdoor"] {
+  fill: #8bb397;
+  stroke: rgba(255, 255, 255, 0.78);
+}
+
+.chat-desk-scope .campus-building[data-category="facility"] {
+  fill: #fef3c7;
+  stroke: #fbbf24;
+}
+
+.chat-desk-scope .campus-walkway-layer {
+  fill: none;
+  stroke: #ef2f6d;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 7;
+  opacity: 0.86;
+}
+
+.chat-desk-scope .campus-label-stem {
+  stroke: rgba(71, 85, 105, 0.3);
+  stroke-dasharray: 4 5;
+  stroke-width: 1.5;
+}
+
+.chat-desk-scope .campus-marker-dot {
+  fill: #64748b;
+  stroke: #ffffff;
+  stroke-width: 3;
+  filter: drop-shadow(0 3px 5px rgba(15, 23, 42, 0.18));
+}
+
+.chat-desk-scope .campus-marker-dot[data-category="gate"] {
+  fill: #2563eb;
+}
+
+.chat-desk-scope .campus-marker-dot[data-category="outdoor"] {
+  fill: #16a34a;
+}
+
+.chat-desk-scope .campus-marker-dot[data-category="facility"] {
+  fill: #d97706;
+}
+
+.chat-desk-scope .is-selected .campus-building {
+  fill: #99f6e4;
+  stroke: #0f766e;
+  stroke-width: 3;
+  filter: drop-shadow(0 10px 12px rgba(15, 118, 110, 0.22));
+}
+
+.chat-desk-scope .is-candidate .campus-building {
+  fill: #fde68a;
+  stroke: #d97706;
+  stroke-width: 2.6;
+}
+
+.chat-desk-scope .is-selected .campus-marker-dot,
+.chat-desk-scope .is-candidate .campus-marker-dot {
+  fill: #e11d48;
+  stroke-width: 4;
+}
+
+.chat-desk-scope .campus-building-label {
+  fill: #ffffff;
+  font-size: 14px;
+  font-weight: 900;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(15, 23, 42, 0.55);
+}
+
+.chat-desk-scope .is-selected .campus-building-label,
+.chat-desk-scope .is-candidate .campus-building-label {
+  fill: #082f2a;
+  font-size: 17px;
+  font-weight: 950;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.chat-desk-scope .campus-route-line {
+  filter: drop-shadow(0 8px 10px rgba(15, 118, 110, 0.24));
+}
+
+.chat-desk-scope .campus-entrance-pin circle:first-child {
+  fill: #ffffff;
+  stroke: #e11d48;
+  stroke-width: 6;
+}
+
+.chat-desk-scope .campus-entrance-pin circle:last-child {
+  fill: #e11d48;
+}
+
+.chat-desk-scope .campus-map-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.chat-desk-scope .campus-map-meta div {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 2px 8px;
+  align-items: center;
+  border: 1px solid rgba(15, 118, 110, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 10px;
+}
+
+.chat-desk-scope .campus-map-meta svg {
+  grid-row: 1 / span 2;
+  color: #0f766e;
+}
+
+.chat-desk-scope .campus-map-meta span {
+  min-width: 0;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 950;
+  overflow-wrap: anywhere;
+}
+
+.chat-desk-scope .campus-map-meta small {
+  min-width: 0;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.chat-desk-scope .campus-facilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.chat-desk-scope .campus-facilities span {
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: #0f766e;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.chat-desk-scope .campus-route-steps {
+  display: grid;
+  gap: 7px;
+  margin: 13px 0 0;
+  padding-left: 20px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.55;
+}
+
+.chat-desk-scope .campus-map-3d-view {
+  overflow: hidden;
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #eaf6fb 0%, #d8ebdf 100%);
+}
+
+.chat-desk-scope .campus-map-3d-loading {
+  display: grid;
+  place-items: center;
+  min-height: 360px;
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.chat-desk-scope .campus-map-3d-deck {
+  position: relative;
+  height: min(66vh, 620px);
+  min-height: 420px;
+  overflow: hidden;
+  background:
+    linear-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.05) 1px, transparent 1px),
+    radial-gradient(circle at 50% 58%, rgba(139, 179, 151, 0.52), rgba(216, 235, 223, 0.12) 54%, transparent 55%),
+    linear-gradient(180deg, #edf7fb 0%, #dfeee8 100%);
+  background-size: 36px 36px, 36px 36px, 100% 100%, 100% 100%;
+}
+
+.chat-desk-scope .campus-map-3d-deck canvas {
+  outline: none;
+}
+
+.chat-desk-scope .campus-map-3d-scene {
+  position: relative;
+  height: min(66vh, 620px);
+  min-height: 420px;
+  overflow: hidden;
+  perspective: 900px;
+  transform-style: preserve-3d;
+}
+
+.chat-desk-scope .campus-map-3d-ground {
+  position: absolute;
+  inset: 8% 8% 2%;
+  border-radius: 42% 38% 32% 44%;
+  background: rgba(139, 179, 151, 0.5);
+  transform: rotateX(62deg) rotateZ(-8deg) translateY(18%);
+  transform-origin: center;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+
+.chat-desk-scope .campus-map-3d-building {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  min-width: 46px;
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  background: #2f363b;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 950;
+  text-align: center;
+  transform-style: preserve-3d;
+  box-shadow: 0 var(--building-height, 34px) 0 rgba(30, 41, 59, 0.68), 0 20px 34px rgba(15, 23, 42, 0.22);
+}
+
+.chat-desk-scope .campus-map-3d-building.is-selected {
+  background: #99f6e4;
+  color: #082f2a;
+  border-color: #0f766e;
+}
+
+.chat-desk-scope .campus-map-3d-route {
+  position: absolute;
+  inset: 9% 12% 6%;
+  width: 76%;
+  height: 84%;
+  overflow: visible;
+  transform: rotateX(62deg) rotateZ(-8deg) translateY(10%);
+}
+
+.chat-desk-scope .campus-map-3d-route polyline {
+  fill: none;
+  stroke: #0f766e;
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 6px 8px rgba(15, 118, 110, 0.32));
+}
+
+.chat-desk-scope .campus-map-3d-caption {
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid rgba(15, 118, 110, 0.12);
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 .chat-desk-scope .desk-markdown-list {
   position: relative;
   margin: 8px 0 9px;
@@ -1291,11 +1642,23 @@ body {
 /* ───── Chat page ───── */
 .chat-page-bg {
   background:
-    radial-gradient(ellipse at 15% 15%, rgba(0, 61, 165, 0.09) 0%, transparent 50%),
-    radial-gradient(ellipse at 85% 80%, rgba(0, 174, 239, 0.07) 0%, transparent 50%),
-    radial-gradient(ellipse at 70% 10%, rgba(0, 80, 204, 0.06) 0%, transparent 40%),
-    radial-gradient(ellipse at 30% 85%, rgba(0, 32, 96, 0.05) 0%, transparent 40%),
-    #F4F5F7;
+    radial-gradient(circle at 18% 10%, rgba(0, 174, 239, 0.11), transparent 30%),
+    radial-gradient(circle at 78% 4%, rgba(0, 61, 165, 0.09), transparent 26%),
+    linear-gradient(180deg, #ffffff 0%, #f7faff 48%, #eef4ff 100%);
+}
+
+.chat-page-bg::before {
+  content: "";
+  position: fixed;
+  inset: 100px 0 auto;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 61, 165, 0.18),
+    transparent
+  );
 }
 
 .site-header.chat-mode {
@@ -1311,6 +1674,14 @@ body {
   color: var(--blue);
   border-color: rgba(0,61,165,0.16);
   background: var(--blue-tint);
+}
+.site-header.chat-mode .header-legacy-link {
+  color: var(--blue);
+  border-color: rgba(0,61,165,0.16);
+  background: var(--blue-tint);
+}
+.site-header.chat-mode .header-legacy-link:hover {
+  background: #e2ebff;
 }
 
 .chat-main,
@@ -1341,6 +1712,18 @@ body {
 @media (max-width: 1023px) {
   .chat-main,
   .chat-footer {
+    margin-left: 0;
+  }
+}
+
+@media (min-width: 1024px) {
+  .chat-page-bg.home-page-shell.home-sidebar-open .chat-main,
+  .chat-page-bg.home-page-shell.home-sidebar-open .chat-footer {
+    margin-left: 292px;
+  }
+
+  .chat-page-bg.home-page-shell.home-sidebar-closed .chat-main,
+  .chat-page-bg.home-page-shell.home-sidebar-closed .chat-footer {
     margin-left: 0;
   }
 }

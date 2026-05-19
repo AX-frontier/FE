@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Menu, Send, Paperclip, RotateCcw, BookOpen, FileCheck } from 'lucide-react';
+import { BookOpen, ExternalLink, FileCheck, Menu, Paperclip, RotateCcw, Send } from 'lucide-react';
 import type { Message, AgentType, ChatHistory, ConversationDetail } from '@/types/chat';
 import { getConversationDetail, listConversations, normalizeTableChecks, reviewDocument, sendQueryToSpringStream } from '@/utils/aiService';
 import type { DocumentReviewApiResponse } from '@/utils/aiService';
 import { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
 import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
+import CampusMapCard, {
+  campusMapResultFromUnknown,
+  type CampusMapResult,
+} from './components/CampusMapCard';
 
 type DisplayMessage = Message & {
   reviewScore?: number;
@@ -27,6 +31,7 @@ type DisplayMessage = Message & {
   bookMatches?: BookMatch[];
   searchKeyword?: string | null;
   resultCount?: number | null;
+  mapResult?: CampusMapResult;
 };
 
 type BookMatch = {
@@ -198,6 +203,11 @@ function libraryResultFromMetadata(metadata?: Record<string, unknown>): {
   };
 }
 
+function campusMapResultFromMetadata(metadata?: Record<string, unknown>): CampusMapResult | undefined {
+  const nestedSources = asRecord(metadata?.sources);
+  return campusMapResultFromUnknown(metadata?.mapResult ?? nestedSources?.mapResult);
+}
+
 function documentReviewFromMetadata(metadata?: Record<string, unknown>): (Partial<DocumentReviewApiResponse> & {
   originalText?: string;
   originalHtml?: string | null;
@@ -300,8 +310,12 @@ function toDisplayMessages(detail: ConversationDetail): DisplayMessage[] {
       return reviewResultMessageFromHistory(message, review);
     }
     const libraryResult = message.role === 'assistant' ? libraryResultFromMetadata(message.metadata) : null;
+    const mapResult = message.role === 'assistant' ? campusMapResultFromMetadata(message.metadata) : undefined;
     if (libraryResult) {
       lastAgent = 'library';
+    }
+    if (mapResult) {
+      lastAgent = 'map';
     }
     return {
       id: `${message.role}-${message.queryUid}-${message.createdAt}`,
@@ -314,6 +328,7 @@ function toDisplayMessages(detail: ConversationDetail): DisplayMessage[] {
       bookMatches: libraryResult?.bookMatches,
       searchKeyword: libraryResult?.searchKeyword,
       resultCount: libraryResult?.resultCount,
+      mapResult,
     };
   });
 }
@@ -321,9 +336,25 @@ function toDisplayMessages(detail: ConversationDetail): DisplayMessage[] {
 function detectAgentFromText(content: string): AgentType {
   const libraryKeywords = ['도서관', '학술정보관', '도서', '책', '대출', '반납', '열람실'];
   const documentKeywords = ['결재', '문서', '기안', '공문', '검토', '검수'];
+  const mapKeywords = ['어디', '위치', '가는 길', '가는길', '길찾기', '출입구'];
+  const campusPlaces = ['상상관', '학생회관', '공학관', '미래관', '탐구관', '도서관', '학술정보관'];
+  const bookLocationKeywords = ['책', '도서', '청구기호', '서가', '소장'];
+  if (
+    mapKeywords.some((keyword) => content.includes(keyword)) &&
+    campusPlaces.some((keyword) => content.includes(keyword)) &&
+    !bookLocationKeywords.some((keyword) => content.includes(keyword))
+  ) return 'map';
   if (documentKeywords.some((keyword) => content.includes(keyword))) return 'document';
   if (libraryKeywords.some((keyword) => content.includes(keyword))) return 'library';
   return 'main';
+}
+
+function agentFromTargetAgent(value: unknown, fallback: AgentType): AgentType {
+  const raw = String(value ?? fallback).toLowerCase();
+  if (raw === 'document_review') return 'document';
+  if (raw === 'campus_map') return 'map';
+  if (raw === 'main' || raw === 'library' || raw === 'document' || raw === 'map') return raw;
+  return fallback;
 }
 
 function containsHtmlTable(html?: string | null): boolean {
@@ -384,6 +415,13 @@ const AGENT_META: Record<AgentType, {
     department: '관리부서: 총무인사팀(전자결재)',
     routeLabel: '기안',
     answeringText: '전자결재 기안 에이전트가 답변중입니다.',
+  },
+  map: {
+    desc: '캠퍼스 위치와 도보 경로 안내',
+    scanColor: 'var(--agent-main)',
+    department: '관리부서: 캠퍼스 안내',
+    routeLabel: 'MAP',
+    answeringText: '캠퍼스 맵 에이전트가 답변중입니다.',
   },
 };
 
@@ -505,11 +543,18 @@ export default function ChatPage() {
 
   const push = (m: DisplayMessage) => setMessages(p => [...p, m]);
 
+  const clearInput = () => {
+    setInput('');
+    if (textareaRef.current) {
+      textareaRef.current.value = '';
+    }
+  };
+
   const handleSend = async (override?: string, targetConversationUid = conversationUid) => {
     const text = (override ?? input).trim();
     if (!text || isSendingRef.current) return;
     isSendingRef.current = true;
-    setInput('');
+    clearInput();
     setIsLoading(true);
 
     push({ id: Date.now().toString(), role: 'user', content: text, timestamp: new Date() });
@@ -535,8 +580,7 @@ export default function ChatPage() {
 
       for await (const event of sendQueryToSpringStream(text, targetConversationUid)) {
         if (event.type === 'routing') {
-          const raw = event.targetAgent.toLowerCase();
-          const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
+          const agent = agentFromTargetAgent(event.targetAgent, resolvedAgent);
           resolvedAgent = agent;
           setCurrentAgent(agent);
           ensureAnswerMessage(agent);
@@ -554,8 +598,7 @@ export default function ChatPage() {
           }
         } else if (event.type === 'done') {
           receivedTerminalEvent = true;
-          const raw = (event.targetAgent ?? resolvedAgent).toString().toLowerCase();
-          const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
+          const agent = agentFromTargetAgent(event.targetAgent, resolvedAgent);
           setCurrentAgent(agent);
           setMessages(p => p.map(m =>
             m.id === discoveryId ? { ...m, agentType: agent, isSearching: false } : m
@@ -569,6 +612,7 @@ export default function ChatPage() {
               bookMatches: bookMatchesFromUnknown(event.matchedBooks),
               searchKeyword: typeof event.searchKeyword === 'string' ? event.searchKeyword : null,
               resultCount: typeof event.resultCount === 'number' ? event.resultCount : null,
+              mapResult: campusMapResultFromUnknown(event.mapResult),
             } : m));
           } else {
             setMessages(p => p.map(m => m.id === tid ? {
@@ -577,6 +621,7 @@ export default function ChatPage() {
               bookMatches: bookMatchesFromUnknown(event.matchedBooks),
               searchKeyword: typeof event.searchKeyword === 'string' ? event.searchKeyword : null,
               resultCount: typeof event.resultCount === 'number' ? event.resultCount : null,
+              mapResult: campusMapResultFromUnknown(event.mapResult),
             } : m));
           }
         }
@@ -596,6 +641,7 @@ export default function ChatPage() {
         m.id === discoveryId ? { ...m, isSearching: false } : m
       ));
     } finally {
+      clearInput();
       isSendingRef.current = false;
       setIsLoading(false);
       refreshHistories();
@@ -665,10 +711,13 @@ export default function ChatPage() {
   const reviewMode = currentAgent === 'document' || messages.some((message) => message.reviewScore !== undefined || message.showDocInput);
 
   return (
-    <div className="chat-page-bg chat-desk-scope" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div
+      className={`chat-page-bg chat-desk-scope home-page-shell ${sidebarOpen ? 'home-sidebar-open' : 'home-sidebar-closed'}`}
+      style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', position: 'relative' }}
+    >
 
       {/* ── Header ── */}
-      <header className={`site-header chat-mode ${sidebarOpen ? 'sidebar-active' : ''}`} style={{ zIndex: 100 }}>
+      <header className="site-header chat-mode" style={{ zIndex: 100 }}>
         <div
           style={{
             width: '100%',
@@ -682,12 +731,13 @@ export default function ChatPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <button
               onClick={() => setSidebarOpen((open) => !open)}
-              className="home-history-button chat-menu-button"
+              className="home-history-button"
               aria-label={sidebarOpen ? '대화 기록 닫기' : '대화 기록 열기'}
             >
               <Menu size={20} />
             </button>
             <button
+              type="button"
               onClick={() => navigate('/')}
               className="header-logo-button"
               aria-label="홈으로 이동"
@@ -695,7 +745,17 @@ export default function ChatPage() {
               <img className="header-logo-img header-logo-img-chat" src="/hansung_logo.png" alt="한성대학교" />
             </button>
           </div>
-          <div aria-hidden="true" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <a
+              href="https://www.hansung.ac.kr"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="header-legacy-link"
+            >
+              <ExternalLink size={14} />
+              기존 홈페이지
+            </a>
+          </div>
         </div>
       </header>
 
@@ -853,6 +913,9 @@ export default function ChatPage() {
                                 </div>
                               </div>
                             )}
+                            {msg.mapResult && (
+                              <CampusMapCard result={msg.mapResult} />
+                            )}
                           </>
                         )}
                         {msg.bookMatches && msg.bookMatches.length > 0 && (
@@ -933,7 +996,8 @@ export default function ChatPage() {
       {/* ── Input bar ── */}
       <footer className="chat-footer" style={{
         flexShrink: 0, padding: '8px 16px 16px',
-        background: 'var(--bg)', borderTop: '1px solid var(--border)',
+        background: 'linear-gradient(180deg, rgba(246, 249, 255, 0), rgba(246, 249, 255, 0.98) 28%, #f6f9ff 100%)',
+        borderTop: 'none',
       }}>
         <div style={{ maxWidth: 760, margin: '0 auto' }}>
           {/* Input */}
@@ -941,8 +1005,20 @@ export default function ChatPage() {
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              onChange={e => {
+                if (isSendingRef.current) {
+                  e.currentTarget.value = '';
+                  return;
+                }
+                setInput(e.target.value);
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (e.nativeEvent.isComposing) return;
+                  handleSend();
+                }
+              }}
               placeholder="메시지를 입력하세요  (Enter: 전송 / Shift+Enter: 줄바꿈)"
               rows={2}
               style={{
