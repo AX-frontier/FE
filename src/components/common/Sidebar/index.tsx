@@ -65,9 +65,6 @@ export default function Sidebar({ isOpen, onClose, histories, onSelectHistory, o
                   <span>{formatHistoryTime(h.timestamp)}</span>
                 </div>
                 <p className="sidebar-history-preview">{h.lastMessage}</p>
-                {h.messageCount !== undefined && (
-                  <span className="sidebar-history-count">{h.messageCount} messages</span>
-                )}
               </div>
             </button>
           ))}

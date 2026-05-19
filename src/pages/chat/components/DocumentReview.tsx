@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
@@ -23,24 +23,6 @@ interface InputProps {
   onSubmit: (payload: DocumentSubmitPayload) => void;
   isLoading: boolean;
   initialText?: string;
-}
-
-interface PasteDiagnostics {
-  types: string[];
-  htmlLength: number;
-  plainLength: number;
-  tableCount: number;
-  hasColgroup: boolean;
-  hasRowspan: boolean;
-  hasColspan: boolean;
-  hasWidth: boolean;
-  hasHeight: boolean;
-  hasInlineStyle: boolean;
-  hasBorder: boolean;
-}
-
-function tablePlaceholder(index: number): string {
-  return `[표 ${index + 1}: 표 내용은 원본 전자결재/HWP 표에서 직접 확인·반영해 주세요.]`;
 }
 
 const BLOCK_TEXT_TAGS = new Set([
@@ -106,32 +88,6 @@ function htmlToText(html: string): string {
   return extractTextPreservingSpaces(doc.body);
 }
 
-function inspectClipboardHtml(types: string[], html: string, plain: string): PasteDiagnostics {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const tables = Array.from(doc.querySelectorAll('table'));
-  const cells = Array.from(doc.querySelectorAll('td, th'));
-  const rows = Array.from(doc.querySelectorAll('tr'));
-  return {
-    types,
-    htmlLength: html.length,
-    plainLength: plain.length,
-    tableCount: tables.length,
-    hasColgroup: Boolean(doc.querySelector('colgroup, col')),
-    hasRowspan: cells.some((cell) => cell.hasAttribute('rowspan')),
-    hasColspan: cells.some((cell) => cell.hasAttribute('colspan')),
-    hasWidth: [...tables, ...cells].some((element) =>
-      element.hasAttribute('width') || /(?:^|;)\s*width\s*:/i.test(element.getAttribute('style') ?? '')
-    ),
-    hasHeight: [...rows, ...cells].some((element) =>
-      element.hasAttribute('height') || /(?:^|;)\s*height\s*:/i.test(element.getAttribute('style') ?? '')
-    ),
-    hasInlineStyle: [...tables, ...rows, ...cells].some((element) => element.hasAttribute('style')),
-    hasBorder: [...tables, ...cells].some((element) =>
-      element.hasAttribute('border') || /(?:^|;)\s*border(?:-[\w-]+)?\s*:/i.test(element.getAttribute('style') ?? '')
-    ),
-  };
-}
-
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -139,70 +95,6 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
-}
-
-function visualizeSpaces(value: string): string {
-  return value
-    .replace(/ /g, '␠')
-    .replace(/\t/g, '⇥')
-    .replace(/\u00a0/g, '⍽');
-}
-
-function renderMarkdown(markdown: string): string {
-  const lines = markdown.split('\n');
-  const rendered: string[] = [];
-  let section = '';
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (line.startsWith('### ')) {
-      section = line.slice(4);
-      rendered.push(`<h3>${escapeHtml(section)}</h3>`);
-      continue;
-    }
-    if (line.startsWith('## ')) {
-      section = line.slice(3);
-      rendered.push(`<h2>${escapeHtml(section)}</h2>`);
-      continue;
-    }
-    const findingLine = line.match(/^- (?:\[(HIGH|MEDIUM|LOW)\]\s+)?(.+)$/);
-    if (section === '자동 수정 제안' && findingLine && !line.includes('자동 수정 제안 없음')) {
-      const detailLines: string[] = [];
-      while (lines[index + 1]?.startsWith('  - ')) {
-        index += 1;
-        const detail = lines[index].replace(/^  - /, '');
-        const changeLine = detail.match(/^(원문|수정안):(.*)$/);
-        if (changeLine) {
-          const value = changeLine[2].startsWith(' ') ? changeLine[2].slice(1) : changeLine[2];
-          detailLines.push(
-            `<p><strong>${escapeHtml(changeLine[1])}</strong>: <code class="space-visible">${escapeHtml(visualizeSpaces(value))}</code></p>`
-          );
-        } else {
-          detailLines.push(`<p>${escapeHtml(detail)}</p>`);
-        }
-      }
-      rendered.push(
-        `<div class="review-finding-card">` +
-          `<div class="review-finding-title">${escapeHtml(findingLine[2])}</div>` +
-          detailLines.join('') +
-        `</div>`
-      );
-      continue;
-    }
-    if (line.startsWith('- ') && section === '직접 확인 필요') {
-      rendered.push(`<div class="review-check-card">${escapeHtml(line.slice(2))}</div>`);
-      continue;
-    }
-    if (line.startsWith('- ')) {
-      rendered.push(`<p class="markdown-list">${escapeHtml(line)}</p>`);
-      continue;
-    }
-    if (!line.trim()) {
-      rendered.push('<br />');
-      continue;
-    }
-    rendered.push(`<p>${escapeHtml(line)}</p>`);
-  }
-  return rendered.join('');
 }
 
 function sanitizeClipboardDocument(doc: Document): void {
@@ -226,39 +118,169 @@ function sanitizeClipboardDocument(doc: Document): void {
   });
 }
 
+function preserveLeadingItemSpaces(doc: Document): void {
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const text = node.textContent ?? '';
+    const replaced = text.replace(
+      /^([ \u00a0]{2,})(?=(?:\d+\.|[가-힣]\.|\d+\)|[가-힣]\)|\(\d+\)|\([가-힣]\)|[①-⑳]|[㉮-㉻]))/,
+      (spaces) => '\u00a0'.repeat(spaces.length),
+    );
+    if (replaced !== text) {
+      node.textContent = replaced;
+    }
+    node = walker.nextNode();
+  }
+}
+
 function sanitizeHtmlForClipboard(html: string): string {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   sanitizeClipboardDocument(doc);
+  preserveLeadingItemSpaces(doc);
   return `<!doctype html><html><head><meta charset="utf-8"></head><body>${doc.body.innerHTML}</body></html>`;
-}
-
-function stripTablesForBodyCopy(html: string): string {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  sanitizeClipboardDocument(doc);
-  doc.querySelectorAll('table').forEach((table, index) => {
-    const placeholder = doc.createElement('p');
-    placeholder.textContent = tablePlaceholder(index);
-    table.replaceWith(placeholder);
-  });
-  return doc.body.innerHTML;
 }
 
 function sanitizeHtmlForPreview(html: string): string {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   sanitizeClipboardDocument(doc);
+  preserveLeadingItemSpaces(doc);
   return doc.body.innerHTML;
 }
 
-function buildDocumentPreviewHtml(html: string, stripTables: boolean): string {
-  return stripTables ? stripTablesForBodyCopy(html) : sanitizeHtmlForPreview(html);
+type FindingItem = DocumentReviewApiResponse['findings'][number];
+type CheckItem = DocumentReviewApiResponse['checkRequiredItems'][number];
+type TableCheckItem = DocumentReviewApiResponse['tableChecks'][number];
+
+interface ReviewAnnotation {
+  id: string;
+  kind: 'fix' | 'check' | 'table';
+  title: string;
+  message: string;
+  reason: string;
+  originalText?: string | null;
+  suggestedText?: string | null;
+  candidates: string[];
+}
+
+interface FloatingTooltip {
+  text: string;
+  x: number;
+  y: number;
+}
+
+function plainTextToHtml(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => `<p>${escapeHtml(line || ' ')}</p>`)
+    .join('');
+}
+
+function amountCandidatesFromText(value: string): string[] {
+  const withUnit = value.match(/\d[\d,]*\s*원/g) ?? [];
+  const withoutUnit = withUnit.map((amount) => amount.replace(/\s*원$/, ''));
+  return Array.from(new Set([...withUnit, ...withoutUnit]));
+}
+
+function buildReviewAnnotations(
+  findings: FindingItem[],
+  checks: CheckItem[],
+  tableChecks: TableCheckItem[],
+): ReviewAnnotation[] {
+  const fixAnnotations = findings.map((finding, index) => ({
+    id: `fix-${index + 1}`,
+    kind: 'fix' as const,
+    title: finding.category,
+    message: finding.suggestedText ? `${finding.originalText} → ${finding.suggestedText}` : finding.originalText,
+    reason: finding.reason,
+    originalText: finding.originalText,
+    suggestedText: finding.suggestedText,
+    candidates: [finding.originalText, finding.suggestedText ?? ''].filter(Boolean),
+  }));
+
+  const checkAnnotations = checks.map((item, index) => ({
+    id: `check-${index + 1}`,
+    kind: 'check' as const,
+    title: item.category,
+    message: item.message,
+    reason: item.message,
+    originalText: item.originalText ?? null,
+    suggestedText: null,
+    candidates: [item.originalText ?? '', ...amountCandidatesFromText(item.message)].filter(Boolean),
+  }));
+
+  const tableAnnotations = tableChecks.map((item, index) => ({
+    id: `table-${index + 1}`,
+    kind: 'table' as const,
+    title: `표 ${item.tableIndex || '-'} · ${item.tableTitle}`,
+    message: item.message,
+    reason: item.suggestion,
+    originalText: null,
+    suggestedText: null,
+    candidates: amountCandidatesFromText(`${item.message} ${item.suggestion}`),
+  }));
+
+  return [...fixAnnotations, ...checkAnnotations, ...tableAnnotations];
+}
+
+function markFirstTextMatch(doc: Document, root: HTMLElement, candidate: string, annotation: ReviewAnnotation): boolean {
+  const normalizedCandidate = candidate.replace(/\s+/g, ' ').trim();
+  if (normalizedCandidate.length < 2) return false;
+
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const text = node.textContent ?? '';
+    const compactText = text.replace(/\s+/g, ' ');
+    const compactIndex = compactText.indexOf(normalizedCandidate);
+    const directIndex = text.indexOf(candidate);
+    const index = directIndex >= 0 ? directIndex : compactIndex >= 0 ? text.indexOf(normalizedCandidate[0]) : -1;
+    if (index >= 0) {
+      const matchLength = directIndex >= 0 ? candidate.length : normalizedCandidate.length;
+      const before = text.slice(0, index);
+      const matched = text.slice(index, index + matchLength);
+      const after = text.slice(index + matchLength);
+      const mark = doc.createElement('mark');
+      mark.className = `review-issue-mark review-issue-${annotation.kind}`;
+      mark.dataset.issueId = annotation.id;
+      mark.dataset.tooltip = annotation.reason;
+      mark.textContent = matched;
+      const fragment = doc.createDocumentFragment();
+      if (before) fragment.appendChild(doc.createTextNode(before));
+      fragment.appendChild(mark);
+      if (after) fragment.appendChild(doc.createTextNode(after));
+      node.parentNode?.replaceChild(fragment, node);
+      return true;
+    }
+    node = walker.nextNode();
+  }
+  return false;
+}
+
+function applyReviewHighlights(html: string, annotations: ReviewAnnotation[], mode: 'original' | 'corrected'): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  sanitizeClipboardDocument(doc);
+  annotations.forEach((annotation) => {
+    const candidates = mode === 'corrected' && annotation.suggestedText
+      ? [annotation.suggestedText, ...annotation.candidates]
+      : annotation.candidates;
+    for (const candidate of candidates) {
+      const marked = markFirstTextMatch(doc, doc.body, candidate, annotation);
+      if (marked && annotation.kind === 'fix') break;
+    }
+  });
+  return doc.body.innerHTML;
+}
+
+function scrollToIssue(issueId: string): void {
+  document
+    .querySelector(`[data-issue-id="${CSS.escape(issueId)}"]`)
+    ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) {
-  const showPasteDiagnostics = import.meta.env.DEV;
   const [textLength, setTextLength] = useState(0);
-  const [pasteDiagnostics, setPasteDiagnostics] = useState<PasteDiagnostics | null>(null);
   const [rawClipboardHtml, setRawClipboardHtml] = useState<string | null>(null);
-  const [rawCopyStatus, setRawCopyStatus] = useState<string | null>(null);
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -274,14 +296,8 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
     },
     editorProps: {
       handlePaste: (_view, event) => {
-        const types = Array.from(event.clipboardData?.types ?? []);
         const html = event.clipboardData?.getData('text/html') ?? '';
-        const plain = event.clipboardData?.getData('text/plain') ?? '';
         setRawClipboardHtml(html ? sanitizeHtmlForPreview(html) : null);
-        setRawCopyStatus(null);
-        if (showPasteDiagnostics) {
-          setPasteDiagnostics(inspectClipboardHtml(types, html, plain));
-        }
         return false;
       },
     },
@@ -300,43 +316,25 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
     });
   };
 
-  const handleCopyRawHtml = async () => {
-    if (!rawClipboardHtml) return;
-    try {
-      const plainText = htmlToText(rawClipboardHtml);
-      if ('ClipboardItem' in window) {
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            'text/html': new Blob([rawClipboardHtml], { type: 'text/html' }),
-            'text/plain': new Blob([plainText], { type: 'text/plain' }),
-          }),
-        ]);
-      } else {
-        await navigator.clipboard.writeText(plainText);
-      }
-      setRawCopyStatus('원본 HTML 복사됨');
-    } catch {
-      setRawCopyStatus('원본 HTML 복사 실패');
-    }
-  };
-
   return (
-    <div className="review-card" style={{ width: '100%' }}>
-      <div className="review-card-header">
+    <div className="review-card document-input-card" style={{ width: '100%' }}>
+      <div className="review-card-header document-input-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <FileText size={14} color="var(--blue)" />
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-1)' }}>문서 입력</span>
+          <FileText size={18} color="var(--agent-document)" />
+          <div>
+            <span style={{ display: 'block', fontSize: 18, fontWeight: 850, color: 'var(--text-1)', letterSpacing: '-0.04em' }}>문서 입력</span>
+            <span style={{ display: 'block', marginTop: 2, fontSize: 12, color: 'var(--text-3)' }}>문서의 본문 또는 초안을 붙여넣으세요.</span>
+          </div>
         </div>
-        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>표 포함 본문을 그대로 붙여넣으세요</span>
       </div>
       <div
+        className="document-editor-surface"
         style={{
-          minHeight: 220,
-          padding: '14px 16px',
-          fontSize: 13,
+          minHeight: 300,
+          padding: '28px 32px',
+          fontSize: 15,
           lineHeight: 1.8,
           color: 'var(--text-1)',
-          background: 'var(--surface)',
           overflowX: 'auto',
         }}
       >
@@ -346,30 +344,11 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '10px 14px', borderTop: '1px solid var(--border)',
       }}>
-        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-3)' }}>
           {textLength}자
           {rawClipboardHtml ? ' · 원본 서식 보존' : ''}
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {showPasteDiagnostics && rawClipboardHtml && (
-            <button
-              type="button"
-              onClick={handleCopyRawHtml}
-              style={{
-                border: '1px solid var(--border)',
-                background: 'var(--surface)',
-                color: 'var(--text-2)',
-                padding: '7px 10px',
-                borderRadius: 7,
-                fontSize: 12,
-                fontWeight: 700,
-                fontFamily: 'inherit',
-                cursor: 'pointer',
-              }}
-            >
-              {rawCopyStatus ?? '원본 HTML 복사 테스트'}
-            </button>
-          )}
           <button
             onClick={handleSubmit}
             disabled={!editor || textLength === 0 || isLoading}
@@ -380,66 +359,6 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
           </button>
         </div>
       </div>
-      {showPasteDiagnostics && pasteDiagnostics && (
-        <details
-          style={{
-            borderTop: '1px solid var(--border)',
-            background: 'rgba(246, 248, 252, 0.9)',
-          }}
-        >
-          <summary
-            style={{
-              cursor: 'pointer',
-              padding: '9px 14px',
-              fontSize: 11,
-              fontWeight: 800,
-              color: 'var(--text-2)',
-              userSelect: 'none',
-            }}
-          >
-            붙여넣기 진단 보기
-          </summary>
-          <div style={{ padding: '0 14px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                gap: 6,
-              }}
-            >
-              {[
-                ['HTML', pasteDiagnostics.htmlLength ? `${pasteDiagnostics.htmlLength.toLocaleString()}자` : '없음'],
-                ['Plain', `${pasteDiagnostics.plainLength.toLocaleString()}자`],
-                ['표', `${pasteDiagnostics.tableCount}개`],
-                ['types', pasteDiagnostics.types.join(', ') || '없음'],
-                ['colgroup', pasteDiagnostics.hasColgroup ? '있음' : '없음'],
-                ['병합', pasteDiagnostics.hasRowspan || pasteDiagnostics.hasColspan ? '있음' : '없음'],
-                ['width/height', pasteDiagnostics.hasWidth || pasteDiagnostics.hasHeight ? '있음' : '없음'],
-                ['style/border', pasteDiagnostics.hasInlineStyle || pasteDiagnostics.hasBorder ? '있음' : '없음'],
-              ].map(([label, value]) => (
-                <div
-                  key={label}
-                  style={{
-                    border: '1px solid var(--border)',
-                    borderRadius: 7,
-                    padding: '7px 8px',
-                    background: 'var(--surface)',
-                    minWidth: 0,
-                  }}
-                >
-                  <div style={{ fontSize: 10, color: 'var(--text-3)', marginBottom: 3 }}>{label}</div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {value}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: 'var(--text-3)' }}>
-              민감정보 노출 방지를 위해 원문 HTML은 저장하거나 표시하지 않고, 표 구조 판단에 필요한 요약값만 표시합니다.
-            </p>
-          </div>
-        </details>
-      )}
     </div>
   );
 }
@@ -457,6 +376,9 @@ interface ResultProps {
   copyNotice?: string | null;
   tableChecks?: DocumentReviewApiResponse['tableChecks'];
   tableChecksAvailable?: boolean;
+  findings?: DocumentReviewApiResponse['findings'];
+  checkRequiredItems?: DocumentReviewApiResponse['checkRequiredItems'];
+  formatNoticeItems?: DocumentReviewApiResponse['formatNoticeItems'];
   stripTablesOnCopy?: boolean;
 }
 
@@ -465,15 +387,31 @@ export function ReviewResult({
   originalText,
   originalHtml,
   correctedText,
-  feedbackText,
   correctedHtml,
   copyNotice,
+  findings = [],
+  checkRequiredItems = [],
+  tableChecks = [],
+  formatNoticeItems = [],
 }: ResultProps) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<FloatingTooltip | null>(null);
 
   const color = score >= 80 ? 'var(--ok)' : score >= 60 ? 'var(--warn)' : 'var(--err)';
   const label = score >= 80 ? '양호' : score >= 60 ? '보완 필요' : '수정 필요';
+  const annotations = buildReviewAnnotations(findings, checkRequiredItems, tableChecks);
+  const confirmationAnnotations = annotations.filter((annotation) => annotation.kind !== 'fix');
+  const originalPreviewHtml = applyReviewHighlights(
+    originalHtml ? sanitizeHtmlForPreview(originalHtml) : plainTextToHtml(originalText ?? ''),
+    annotations,
+    'original',
+  );
+  const correctedPreviewHtml = applyReviewHighlights(
+    correctedHtml ? sanitizeHtmlForPreview(correctedHtml) : plainTextToHtml(correctedText),
+    annotations,
+    'corrected',
+  );
 
   const handleCopy = async () => {
     try {
@@ -509,57 +447,44 @@ export function ReviewResult({
     }
   };
 
-  // Parse sections from feedbackText heuristically
-  const sections: { title: string; status: '준수' | '보완' | '미준수'; desc: string }[] = [
-    { title: '두문', status: score >= 80 ? '준수' : score >= 60 ? '보완' : '미준수', desc: '수신 및 목적 표기, 제목 형식' },
-    { title: '본문', status: score >= 70 ? '준수' : '보완', desc: '핵심 내용 구성 및 문체' },
-    { title: '결문', status: score >= 65 ? '준수' : score >= 50 ? '보완' : '미준수', desc: '종결 표현 및 끝 표기' },
-  ];
-
-  const statusStyle = (s: string) => {
-    if (s === '준수') return 'section-ok';
-    if (s === '보완') return 'section-warn';
-    return 'section-err';
-  };
   const copyButtonLabel = copied ? '복사됨' : '본문 복사';
 
+  const handlePreviewTooltip = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target instanceof HTMLElement
+      ? event.target.closest<HTMLElement>('.review-issue-mark')
+      : null;
+    const text = target?.dataset.tooltip;
+    if (!target || !text) {
+      setTooltip(null);
+      return;
+    }
+    const tooltipHalfWidth = 170;
+    const x = Math.min(Math.max(event.clientX, tooltipHalfWidth), window.innerWidth - tooltipHalfWidth);
+    const y = Math.max(16, event.clientY - 14);
+    setTooltip({ text, x, y });
+  };
+
   return (
-    <div className="anim-fade-up" style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
+    <div className="anim-fade-up document-review-result" style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%' }}>
 
       {/* Score */}
-      <div className="review-card" style={{ padding: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)' }}>검수 결과 — 형식 적합도</span>
+      <div className="review-card review-summary-card" style={{ padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 10 }}>
+          <div>
+            <span style={{ display: 'block', fontSize: 16, fontWeight: 850, color: 'var(--text-1)', letterSpacing: '-0.04em' }}>문서 검토 결과</span>
+            <span className="review-suggestion-count">수정 제안: {findings.length}건</span>
+            {checkRequiredItems.length + tableChecks.length > 0 && (
+              <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-3)' }}>
+                직접 확인 필요 {checkRequiredItems.length + tableChecks.length}건
+              </span>
+            )}
+          </div>
           <span style={{ fontSize: 16, fontWeight: 800, color, letterSpacing: '-0.02em' }}>{score}% <span style={{ fontSize: 12, fontWeight: 600 }}>{label}</span></span>
         </div>
         <div className="progress-bar">
           <div className="progress-fill" style={{ width: `${score}%`, background: color }} />
         </div>
       </div>
-
-      {/* Section analysis */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
-        {sections.map(sec => (
-          <div key={sec.title} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>{sec.title}</span>
-              <span className={`badge-pill ${statusStyle(sec.status)}`} style={{ fontSize: 10, padding: '2px 8px' }}>
-                {sec.status}
-              </span>
-            </div>
-            <p style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.5 }}>{sec.desc}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Feedback */}
-      {feedbackText && (
-        <div
-          className="review-card review-markdown"
-          style={{ padding: '14px 16px', fontSize: 13, lineHeight: 1.75, color: 'var(--text-1)' }}
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(feedbackText) }}
-        />
-      )}
 
       {/* Before / after document */}
       {correctedText && (
@@ -610,19 +535,13 @@ export function ReviewResult({
               <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 800, color: 'var(--text-2)' }}>
                 검토 전
               </div>
-              {originalHtml ? (
-                <div
-                  className="review-document-preview"
-                  style={{ minHeight: 220, maxHeight: 520, padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', overflow: 'auto' }}
-                  dangerouslySetInnerHTML={{
-                    __html: buildDocumentPreviewHtml(originalHtml, false),
-                  }}
-                />
-              ) : (
-                <div style={{ minHeight: 220, maxHeight: 520, padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', overflow: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
-                  {originalText}
-                </div>
-              )}
+              <div
+                className="review-document-preview"
+                style={{ minHeight: 220, maxHeight: 520, padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', overflow: 'auto' }}
+                onMouseMove={handlePreviewTooltip}
+                onMouseLeave={() => setTooltip(null)}
+                dangerouslySetInnerHTML={{ __html: originalPreviewHtml }}
+              />
             </div>
             <div
               aria-hidden="true"
@@ -649,21 +568,51 @@ export function ReviewResult({
               <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 800, color: 'var(--text-2)' }}>
                 검토 후
               </div>
-              {correctedHtml ? (
-                <div
-                  className="review-document-preview"
-                  style={{ minHeight: 220, maxHeight: 520, padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', overflow: 'auto' }}
-                  dangerouslySetInnerHTML={{
-                    __html: buildDocumentPreviewHtml(correctedHtml, false),
-                  }}
-                />
-              ) : (
-                <div style={{ minHeight: 220, maxHeight: 520, padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', overflow: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
-                  {correctedText}
+              <div
+                className="review-document-preview"
+                style={{ minHeight: 220, maxHeight: 520, padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', overflow: 'auto' }}
+                onMouseMove={handlePreviewTooltip}
+                onMouseLeave={() => setTooltip(null)}
+                dangerouslySetInnerHTML={{ __html: correctedPreviewHtml }}
+              />
+            </div>
+          </div>
+          {tooltip && (
+            <div
+              className="review-floating-tooltip"
+              style={{ left: tooltip.x, top: tooltip.y }}
+            >
+              {tooltip.text}
+            </div>
+          )}
+          {(confirmationAnnotations.length > 0 || formatNoticeItems.length > 0) && (
+            <div className="review-annotation-panel">
+              {confirmationAnnotations.length > 0 && (
+                <>
+                  <h4>검토 주석</h4>
+                  <div className="review-annotation-list">
+                    {confirmationAnnotations.map((item) => (
+                      <button key={item.id} type="button" onClick={() => scrollToIssue(item.id)} className={`review-annotation-item review-annotation-${item.kind}`}>
+                        <span>확인</span>
+                        <strong>{item.title}</strong>
+                        <em>{item.message}</em>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {formatNoticeItems.length > 0 && (
+                <div className="review-format-note">
+                  {formatNoticeItems.map((item, index) => (
+                    <p key={`${item.category}-${index}`}>
+                      <strong>{item.category}</strong>
+                      <span>{item.message}</span>
+                    </p>
+                  ))}
                 </div>
               )}
             </div>
-          </div>
+          )}
           {(copyNotice || copyError) && (
             <div style={{ padding: '8px 14px 12px', fontSize: 11, lineHeight: 1.5, color: copyError ? 'var(--err)' : 'var(--text-3)' }}>
               {copyError ?? copyNotice}

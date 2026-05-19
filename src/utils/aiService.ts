@@ -130,6 +130,8 @@ export interface DocumentReviewApiResponse {
     id: string;
     category: string;
     message: string;
+    originalText?: string | null;
+    lineStart?: number | null;
   }>;
   formatNoticeItems: Array<{
     category: string;
