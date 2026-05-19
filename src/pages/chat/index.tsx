@@ -21,6 +21,21 @@ type DisplayMessage = Message & {
   feedbackText?: string;
   showDocInput?: boolean;
   initialDocText?: string;
+  bookMatches?: BookMatch[];
+  searchKeyword?: string | null;
+  resultCount?: number | null;
+};
+
+type BookMatch = {
+  id?: number;
+  title: string;
+  author?: string | null;
+  publisher?: string | null;
+  publishYear?: number | null;
+  holdingCallNo?: string | null;
+  materialType?: string | null;
+  stackLocation?: string | null;
+  stackShelf?: string | null;
 };
 
 const SUGGESTIONS = [
@@ -129,6 +144,53 @@ function asNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function optionalNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function bookMatchesFromUnknown(value: unknown): BookMatch[] {
+  return asArray(value).map((item) => {
+    const record = asRecord(item);
+    if (!record) return null;
+    const title = asString(record.title);
+    if (!title) return null;
+    return {
+      id: optionalNumber(record.id),
+      title,
+      author: asString(record.author) ?? null,
+      publisher: asString(record.publisher) ?? null,
+      publishYear: optionalNumber(record.publishYear) ?? null,
+      holdingCallNo: asString(record.holdingCallNo) ?? null,
+      materialType: asString(record.materialType) ?? null,
+      stackLocation: asString(record.stackLocation) ?? null,
+      stackShelf: asString(record.stackShelf) ?? null,
+    };
+  }).filter(Boolean).slice(0, 5) as BookMatch[];
+}
+
+function libraryResultFromMetadata(metadata?: Record<string, unknown>): {
+  bookMatches: BookMatch[];
+  searchKeyword: string | null;
+  resultCount: number | null;
+} | null {
+  const nestedSources = asRecord(metadata?.sources);
+  const library = asRecord(metadata?.library) ?? asRecord(nestedSources?.library);
+  const matchedBooks = library?.matchedBooks ?? metadata?.matchedBooks ?? nestedSources?.matchedBooks;
+  const bookMatches = bookMatchesFromUnknown(matchedBooks);
+  if (bookMatches.length === 0) return null;
+  const resultCount = optionalNumber(library?.resultCount ?? metadata?.resultCount ?? nestedSources?.resultCount);
+  return {
+    bookMatches,
+    searchKeyword: asString(library?.searchKeyword ?? metadata?.searchKeyword ?? nestedSources?.searchKeyword) ?? null,
+    resultCount: resultCount ?? null,
+  };
+}
+
 function documentReviewFromMetadata(metadata?: Record<string, unknown>): (Partial<DocumentReviewApiResponse> & {
   originalText?: string;
   originalHtml?: string | null;
@@ -227,6 +289,10 @@ function toDisplayMessages(detail: ConversationDetail): DisplayMessage[] {
       lastAgent = 'document';
       return reviewResultMessageFromHistory(message, review);
     }
+    const libraryResult = message.role === 'assistant' ? libraryResultFromMetadata(message.metadata) : null;
+    if (libraryResult) {
+      lastAgent = 'library';
+    }
     return {
       id: `${message.role}-${message.queryUid}-${message.createdAt}`,
       role: message.role,
@@ -235,6 +301,9 @@ function toDisplayMessages(detail: ConversationDetail): DisplayMessage[] {
         : message.content,
       timestamp: new Date(message.createdAt),
       agentType: message.role === 'assistant' ? lastAgent : undefined,
+      bookMatches: libraryResult?.bookMatches,
+      searchKeyword: libraryResult?.searchKeyword,
+      resultCount: libraryResult?.resultCount,
     };
   });
 }
@@ -468,11 +537,17 @@ export default function ChatPage() {
               ...m, agentType: agent, isTyping: false,
               content: (event.answer as string) || '검토할 전자결재 문서 본문을 입력해주세요.',
               showDocInput: true,
+              bookMatches: bookMatchesFromUnknown(event.matchedBooks),
+              searchKeyword: typeof event.searchKeyword === 'string' ? event.searchKeyword : null,
+              resultCount: typeof event.resultCount === 'number' ? event.resultCount : null,
             } : m));
           } else {
             setMessages(p => p.map(m => m.id === tid ? {
               ...m, agentType: agent, isTyping: false,
               content: (event.answer as string) ?? m.content,
+              bookMatches: bookMatchesFromUnknown(event.matchedBooks),
+              searchKeyword: typeof event.searchKeyword === 'string' ? event.searchKeyword : null,
+              resultCount: typeof event.resultCount === 'number' ? event.resultCount : null,
             } : m));
           }
         }
@@ -733,7 +808,34 @@ export default function ChatPage() {
                             <p>{meta.answeringText}</p>
                           </div>
                         ) : (
-                          <div className="desk-markdown" dangerouslySetInnerHTML={{ __html: renderMessageHtml(msg.content) }} />
+                          <>
+                            <div className="desk-markdown" dangerouslySetInnerHTML={{ __html: renderMessageHtml(msg.content) }} />
+                            {msg.bookMatches && msg.bookMatches.length > 0 && (
+                              <div className="desk-book-results">
+                                <div className="desk-book-results-head">
+                                  <span>추천 도서</span>
+                                  <small>
+                                    {msg.searchKeyword ? `"${msg.searchKeyword}" 검색` : '학술정보관 소장자료'}
+                                    {typeof msg.resultCount === 'number' ? ` · ${msg.resultCount}건` : ''}
+                                  </small>
+                                </div>
+                                <div className="desk-book-list">
+                                  {msg.bookMatches.map((book, index) => (
+                                    <div className="desk-book-row" key={`${book.id ?? book.title}-${index}`}>
+                                      <strong>{index + 1}</strong>
+                                      <div>
+                                        <span>{book.title}</span>
+                                        <p>{[book.author, book.publisher, book.publishYear].filter(Boolean).join(' · ')}</p>
+                                      </div>
+                                      <small>
+                                        {[book.stackLocation, book.stackShelf, book.holdingCallNo].filter(Boolean).join(' · ') || '위치 확인 필요'}
+                                      </small>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     );
