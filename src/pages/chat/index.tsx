@@ -17,6 +17,9 @@ type DisplayMessage = Message & {
   copyNotice?: string | null;
   tableChecks?: DocumentReviewApiResponse['tableChecks'];
   tableChecksAvailable?: boolean;
+  findings?: DocumentReviewApiResponse['findings'];
+  checkRequiredItems?: DocumentReviewApiResponse['checkRequiredItems'];
+  formatNoticeItems?: DocumentReviewApiResponse['formatNoticeItems'];
   stripTablesOnCopy?: boolean;
   feedbackText?: string;
   showDocInput?: boolean;
@@ -154,23 +157,27 @@ function optionalNumber(value: unknown): number | undefined {
 }
 
 function bookMatchesFromUnknown(value: unknown): BookMatch[] {
-  return asArray(value).map((item) => {
-    const record = asRecord(item);
-    if (!record) return null;
-    const title = asString(record.title);
-    if (!title) return null;
-    return {
-      id: optionalNumber(record.id),
-      title,
-      author: asString(record.author) ?? null,
-      publisher: asString(record.publisher) ?? null,
-      publishYear: optionalNumber(record.publishYear) ?? null,
-      holdingCallNo: asString(record.holdingCallNo) ?? null,
-      materialType: asString(record.materialType) ?? null,
-      stackLocation: asString(record.stackLocation) ?? null,
-      stackShelf: asString(record.stackShelf) ?? null,
-    };
-  }).filter(Boolean).slice(0, 5) as BookMatch[];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((book): BookMatch | null => {
+      const record = asRecord(book);
+      if (!record) return null;
+      const title = asString(record.title)?.trim() ?? '';
+      if (!title) return null;
+      return {
+        id: optionalNumber(record.id),
+        title,
+        author: asString(record.author) ?? null,
+        publisher: asString(record.publisher) ?? null,
+        publishYear: optionalNumber(record.publishYear),
+        holdingCallNo: asString(record.holdingCallNo) ?? null,
+        materialType: asString(record.materialType) ?? null,
+        stackLocation: asString(record.stackLocation) ?? null,
+        stackShelf: asString(record.stackShelf) ?? null,
+      };
+    })
+    .filter((book): book is BookMatch => Boolean(book))
+    .slice(0, 5);
 }
 
 function libraryResultFromMetadata(metadata?: Record<string, unknown>): {
@@ -263,13 +270,16 @@ function reviewResultMessageFromHistory(message: ConversationDetail['messages'][
     content: `문서 분석이 완료되었습니다. **${findingCount}건의 수정 제안**, **${checkRequiredItems.length + tableChecks.length}건의 직접 확인 항목**이 식별되었습니다.`,
     timestamp: new Date(message.createdAt),
     agentType: 'document',
-    reviewScore: Math.max(55, 95 - findingCount * 5 - checkRequiredItems.length * 3 - tableCheckPenalty(tableChecks)),
+    reviewScore: calculateReviewScore(summary, checkRequiredItems, tableChecks),
     originalText: review.originalText,
     originalHtml: review.originalHtml,
     correctedText: revisedDocument.content,
     correctedHtml: revisedDocument.htmlContent,
     tableChecks,
     tableChecksAvailable: review.tableChecksAvailable ?? false,
+    findings,
+    checkRequiredItems,
+    formatNoticeItems: review.formatNoticeItems ?? [],
     copyNotice: hasDocumentTables
       ? '본문 복사 시 표를 포함한 HTML을 클립보드에 담습니다. 화면 미리보기와 WebHWP 붙여넣기 결과는 다를 수 있습니다.'
       : null,
@@ -330,10 +340,21 @@ function withoutTableCheckSection(markdown: string): string {
 
 function tableCheckPenalty(tableChecks: DocumentReviewApiResponse['tableChecks']): number {
   return tableChecks.reduce((sum, item) => {
-    if (item.severity === 'HIGH') return sum + 4;
-    if (item.severity === 'MEDIUM') return sum + 2;
-    return sum + 1;
+    if (item.severity === 'HIGH') return sum + 8;
+    if (item.severity === 'MEDIUM') return sum + 5;
+    return sum + 2;
   }, 0);
+}
+
+function calculateReviewScore(
+  summary: DocumentReviewApiResponse['summary'],
+  checkRequiredItems: DocumentReviewApiResponse['checkRequiredItems'],
+  tableChecks: DocumentReviewApiResponse['tableChecks'],
+): number {
+  const findingPenalty = summary.highCount * 9 + summary.mediumCount * 6 + summary.lowCount * 3;
+  const checkPenalty = checkRequiredItems.length * 4;
+  const score = 96 - findingPenalty - checkPenalty - tableCheckPenalty(tableChecks);
+  return Math.max(55, Math.min(100, score));
 }
 
 const AGENT_META: Record<AgentType, {
@@ -500,12 +521,17 @@ export default function ChatPage() {
     });
 
     const tid = `typing-${Date.now()}`;
-    push({ id: tid, role: 'assistant', content: '', agentType: currentAgent, timestamp: new Date(), isTyping: true });
+    let answerMessageCreated = false;
+    let resolvedAgent: AgentType = currentAgent;
+    const ensureAnswerMessage = (agent: AgentType) => {
+      if (answerMessageCreated) return;
+      answerMessageCreated = true;
+      push({ id: tid, role: 'assistant', content: '', agentType: agent, timestamp: new Date(), isTyping: true });
+    };
 
     try {
       let streamingStarted = false;
       let receivedTerminalEvent = false;
-      let resolvedAgent: AgentType = currentAgent;
 
       for await (const event of sendQueryToSpringStream(text, targetConversationUid)) {
         if (event.type === 'routing') {
@@ -513,11 +539,13 @@ export default function ChatPage() {
           const agent = (raw === 'document_review' ? 'document' : raw) as AgentType;
           resolvedAgent = agent;
           setCurrentAgent(agent);
+          ensureAnswerMessage(agent);
           setMessages(p => p.map(m =>
             m.id === discoveryId ? { ...m, agentType: agent, isSearching: false } :
             m.id === tid         ? { ...m, agentType: agent } : m
           ));
         } else if (event.type === 'chunk') {
+          ensureAnswerMessage(resolvedAgent);
           if (!streamingStarted) {
             streamingStarted = true;
             setMessages(p => p.map(m => m.id === tid ? { ...m, isTyping: false, content: event.text } : m));
@@ -532,6 +560,7 @@ export default function ChatPage() {
           setMessages(p => p.map(m =>
             m.id === discoveryId ? { ...m, agentType: agent, isSearching: false } : m
           ));
+          ensureAnswerMessage(agent);
           if (event.requiresDocumentInput) {
             setMessages(p => p.map(m => m.id === tid ? {
               ...m, agentType: agent, isTyping: false,
@@ -553,6 +582,7 @@ export default function ChatPage() {
         }
       }
       if (!streamingStarted && !receivedTerminalEvent) {
+        ensureAnswerMessage(resolvedAgent);
         setMessages(p => p.map(m => m.id === tid ? {
           ...m,
           isTyping: false,
@@ -560,6 +590,7 @@ export default function ChatPage() {
         } : m));
       }
     } catch {
+      ensureAnswerMessage(resolvedAgent);
       setMessages(p => p.map(m =>
         m.id === tid        ? { ...m, content: '죄송합니다. 일시적인 오류가 발생했습니다.', isTyping: false } :
         m.id === discoveryId ? { ...m, isSearching: false } : m
@@ -588,7 +619,7 @@ export default function ChatPage() {
       }, conversationUid);
       const findingCount = res.summary.totalFindingCount;
       const hasDocumentTables = containsHtmlTable(sourceHtml) || containsHtmlTable(res.revisedDocument.htmlContent);
-      const score = Math.max(55, 95 - findingCount * 5 - res.checkRequiredItems.length * 3 - tableCheckPenalty(res.tableChecks));
+      const score = calculateReviewScore(res.summary, res.checkRequiredItems, res.tableChecks);
       const feedbackText = withoutTableCheckSection(res.reviewMarkdown);
 
       push({
@@ -601,6 +632,9 @@ export default function ChatPage() {
         correctedHtml: res.revisedDocument.htmlContent,
         tableChecks: res.tableChecks,
         tableChecksAvailable: res.tableChecksAvailable,
+        findings: res.findings,
+        checkRequiredItems: res.checkRequiredItems,
+        formatNoticeItems: res.formatNoticeItems,
         copyNotice: hasDocumentTables
           ? '본문 복사 시 표를 포함한 HTML을 클립보드에 담습니다. 화면 미리보기와 WebHWP 붙여넣기 결과는 다를 수 있습니다.'
           : null,
@@ -627,46 +661,42 @@ export default function ChatPage() {
     await restoreConversation(id);
   };
 
-  const agentInfo = agentConfig[currentAgent];
   const hasMsg    = messages.length > 0;
-  const reviewMode = messages.some((message) => message.reviewScore !== undefined);
+  const reviewMode = currentAgent === 'document' || messages.some((message) => message.reviewScore !== undefined || message.showDocInput);
 
   return (
     <div className="chat-page-bg chat-desk-scope" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
 
       {/* ── Header ── */}
-      <header className="site-header chat-mode" style={{ display: 'flex', alignItems: 'center', padding: '0 32px', gap: 12 }}>
-        {/* Hamburger */}
-        <button onClick={() => setSidebarOpen(true)}
-          className="chat-menu-button"
-          style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 8, borderRadius: 6,
-            color: 'var(--text-2)', display: 'flex', alignItems: 'center', transition: 'background 0.12s' }}
-          onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg)')}
-          onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+      <header className={`site-header chat-mode ${sidebarOpen ? 'sidebar-active' : ''}`} style={{ zIndex: 100 }}>
+        <div
+          style={{
+            width: '100%',
+            padding: '0 32px',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
         >
-          <Menu size={20} />
-        </button>
-
-        {/* Logo */}
-        <button onClick={() => navigate('/')}
-          style={{ border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 16 }}>
-          <img className="header-logo-img header-logo-img-chat" src="/hansung_logo.png" alt="한성대학교" />
-        </button>
-
-        <div style={{ flex: 1 }} />
-
-        {/* Agent indicator */}
-        {hasMsg && (
-          <span className={`badge-pill ${agentInfo.badgeClass}`} style={{ fontSize: 11 }}>
-            {agentInfo.label}
-          </span>
-        )}
-
-        {/* 장학금 */}
-        <button style={{
-          fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 6,
-          border: 'none', background: 'var(--blue-tint)', color: 'var(--blue)', cursor: 'pointer', fontFamily: 'inherit',
-        }}>장학금</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <button
+              onClick={() => setSidebarOpen((open) => !open)}
+              className="home-history-button chat-menu-button"
+              aria-label={sidebarOpen ? '대화 기록 닫기' : '대화 기록 열기'}
+            >
+              <Menu size={20} />
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              className="header-logo-button"
+              aria-label="홈으로 이동"
+            >
+              <img className="header-logo-img header-logo-img-chat" src="/hansung_logo.png" alt="한성대학교" />
+            </button>
+          </div>
+          <div aria-hidden="true" />
+        </div>
       </header>
 
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)}
@@ -749,19 +779,13 @@ export default function ChatPage() {
                   {/* ── Agent Discovery Card ── */}
                   {msg.isAgentDiscovery && (() => {
                     const type  = msg.agentType ?? 'main';
-                    const cfg   = agentConfig[type];
                     const meta  = AGENT_META[type];
                     if (msg.isSearching) {
                       return (
                         <div className="agent-discovery-card searching">
                           <div className="agent-route-status-line">
-                            <div style={{ display: 'flex', gap: 3 }}>
-                              <span className="dot" /><span className="dot" /><span className="dot" />
-                            </div>
-                            <span>에이전트 탐색중</span>
-                          </div>
-                          <div className="scan-track">
-                            <div className="scan-fill" />
+                            <span className="dot" /><span className="dot" /><span className="dot" />
+                            <span>답변에 적합한 에이전트를 찾고 있습니다.</span>
                           </div>
                         </div>
                       );
@@ -770,13 +794,7 @@ export default function ChatPage() {
                       <div className={`agent-discovery-card found found-${type}`}>
                         <div className="agent-route-status-line" style={{ color: meta.scanColor }}>
                           <span className="agent-route-check-dot" style={{ background: meta.scanColor }} />
-                          <span>에이전트 연결 완료</span>
-                        </div>
-                        <div className="agent-route-summary">
-                          <div className="agent-route-line">
-                            <strong>{cfg.label}</strong>
-                            <span>{meta.department}</span>
-                          </div>
+                          <span>답변에 적합한 에이전트를 찾았습니다.</span>
                         </div>
                       </div>
                     );
@@ -837,23 +855,44 @@ export default function ChatPage() {
                             )}
                           </>
                         )}
+                        {msg.bookMatches && msg.bookMatches.length > 0 && (
+                          <div className="desk-book-results">
+                            <div className="desk-book-results-head">
+                              <span>추천 도서</span>
+                              <small>
+                                {msg.searchKeyword ? `"${msg.searchKeyword}" 검색` : '학술정보관 소장자료'}
+                                {typeof msg.resultCount === 'number' ? ` · ${msg.resultCount}건` : ''}
+                              </small>
+                            </div>
+                            <div className="desk-book-list">
+                              {msg.bookMatches.map((book, index) => (
+                                <div className="desk-book-row" key={`${book.id ?? book.title}-${index}`}>
+                                  <strong>{index + 1}</strong>
+                                  <div>
+                                    <span>{book.title}</span>
+                                    <p>
+                                      {[book.author, book.publisher, book.publishYear]
+                                        .filter(Boolean)
+                                        .join(' · ')}
+                                    </p>
+                                  </div>
+                                  <small>
+                                    {[book.stackLocation, book.stackShelf, book.holdingCallNo]
+                                      .filter(Boolean)
+                                      .join(' · ') || '위치 확인 필요'}
+                                  </small>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
                   {/* Doc input widget */}
                   {msg.showDocInput && (
-                    <div className="desk-document-wrap">
-                      <div className="desk-document-shell">
-                        <aside className="desk-document-brief">
-                          <span className="desk-document-kicker">DOCUMENT REVIEW</span>
-                          <h3>전자결재 문서를 붙여넣어 주세요</h3>
-                          <p>기안문 본문과 표 구조를 함께 읽고, 자동 수정 제안과 직접 확인 항목을 분리해 안내합니다.</p>
-                          <ul>
-                            <li>전자결재 작성 규칙 검토</li>
-                            <li>본문과 표 금액 교차 확인</li>
-                            <li>수정 전후 비교 화면 제공</li>
-                          </ul>
-                        </aside>
+                      <div className="desk-document-wrap">
+                        <div className="desk-document-shell">
                         <div className="desk-document-editor">
                           <DocumentInput
                             onSubmit={handleDocSubmit}
@@ -874,6 +913,10 @@ export default function ChatPage() {
                         correctedText={msg.correctedText ?? ''}
                         correctedHtml={msg.correctedHtml}
                         copyNotice={msg.copyNotice}
+                        findings={msg.findings}
+                        checkRequiredItems={msg.checkRequiredItems}
+                        tableChecks={msg.tableChecks}
+                        formatNoticeItems={msg.formatNoticeItems}
                         feedbackText={msg.feedbackText ?? ''}
                       />
                     </div>

@@ -80,48 +80,43 @@ const MENUS: { id: number; Icon: LucideIcon; label: string; url: string }[] = [
 const NEWS = [
 	{
 		cat: "한성소식",
-		title: "총장 소개 및 대학 비전",
-		content:
-			"한성대학교의 교육 방향과 대학 운영 비전을 한눈에 확인할 수 있는 총장 소개 콘텐츠입니다.",
-		date: "2026.02.09",
+		title: "김선태 교수 2백만원 한성대 발전기금 납부",
+		content: "글로컬상생홍보팀 · NO. 538",
+		date: "2026.05.18",
 		color: "#003DA5",
-		image: "/hansung-news/president.png",
+		image: "/hansung-news/news-538.jpg",
 	},
 	{
-		cat: "홍보갤러리",
-		title: "상상홀 캠퍼스 이미지",
-		content:
-			"한성대학교 캠퍼스와 학생 활동 분위기를 담은 공식 홍보 이미지입니다.",
-		date: "2021.10.28",
-		color: "#0B6E4F",
-		image: "/hansung-news/news-01.jpg",
-	},
-	{
-		cat: "홍보갤러리",
-		title: "한성 홍보대사 연출 이미지",
-		content:
-			"공식 홍보갤러리에서 제공되는 한성대학교 구성원 중심의 캠퍼스 이미지입니다.",
-		date: "2021.10.28",
-		color: "#6B3A0F",
-		image: "/hansung-news/news-02.jpg",
-	},
-	{
-		cat: "캠퍼스",
-		title: "잔디광장과 캠퍼스 라이프",
-		content:
-			"한성대학교 잔디광장과 학내 공간을 배경으로 한 공식 홍보 이미지입니다.",
-		date: "2021.10.28",
-		color: "#003DA5",
-		image: "/hansung-news/news-03.jpg",
-	},
-	{
-		cat: "캠퍼스",
-		title: "한성의 일상과 학내 풍경",
-		content:
-			"학교 소식 영역에서 자연스럽게 순환 노출할 수 있는 캠퍼스 이미지 콘텐츠입니다.",
-		date: "2021.10.28",
+		cat: "한성소식",
+		title: "허은영 교수 1백만원 한성대 발전기금 납부",
+		content: "글로컬상생홍보팀 · NO. 537",
+		date: "2026.05.18",
 		color: "#0050CC",
-		image: "/hansung-news/news-04.jpg",
+		image: "/hansung-news/news-537.jpg",
+	},
+	{
+		cat: "한성소식",
+		title: "한성대학교 총학생회, 오순영 AI 미래포럼 공동의장 초청 <마스터 클래스> 성료",
+		content: "글로컬상생홍보팀 · NO. 536",
+		date: "2026.05.15",
+		color: "#0B6E4F",
+		image: "/hansung-news/news-536.jpg",
+	},
+	{
+		cat: "한성소식",
+		title: "한성대학교 ‘제2회 코지마 특강·워크숍’ 개최",
+		content: "전통 동양화 재료 산학협력 확대 · NO. 535",
+		date: "2026.05.15",
+		color: "#6B3A0F",
+		image: "/hansung-news/news-535.jpg",
+	},
+	{
+		cat: "한성소식",
+		title: "한성대학교 ‘갤러리 지선’ 개관 정헌이 교수 추모 오픈전",
+		content: "글로컬상생홍보팀 · NO. 534",
+		date: "2026.05.11",
+		color: "#0050CC",
+		image: "/hansung-news/news-534.jpg",
 	},
 ];
 
@@ -251,7 +246,7 @@ export default function HomePage() {
 				style={{
 					position: "absolute",
 					inset: 0,
-					background: "rgba(0,12,40,0.62)",
+					background: "rgba(0,12,40,0.38)",
 					zIndex: 1,
 				}}
 			/>
@@ -268,7 +263,7 @@ export default function HomePage() {
 			</button>
 
 			{/* ── Header ── */}
-			<header className="site-header" style={{ zIndex: 100 }}>
+			<header className={`site-header ${sidebarOpen ? "sidebar-active" : ""}`} style={{ zIndex: 100 }}>
 				<div
 					style={{
 						width: "100%",
@@ -285,7 +280,7 @@ export default function HomePage() {
 							className="home-history-button"
 							aria-label={sidebarOpen ? "대화 기록 닫기" : "대화 기록 열기"}
 						>
-							<Menu size={18} />
+							<Menu size={20} />
 						</button>
 						<img
 							className="header-logo-img"
@@ -300,7 +295,7 @@ export default function HomePage() {
 							rel="noopener noreferrer"
 							className="header-legacy-link"
 						>
-							<ExternalLink size={14} />
+							<ExternalLink size={16} />
 							기존 홈페이지
 						</a>
 					</div>
@@ -382,7 +377,6 @@ export default function HomePage() {
 					<div className="search-wrap">
 						<div className="home-ai-search-label">
 							<span className="home-ai-search-mark">AI</span>
-							<span>검색</span>
 						</div>
 						<input
 							ref={inputRef}
@@ -397,7 +391,7 @@ export default function HomePage() {
 								outline: "none",
 								background: "none",
 								padding: "0 16px",
-								fontSize: 16,
+								fontSize: 17,
 								color: "var(--text-1)",
 								fontFamily: "inherit",
 							}}
@@ -418,7 +412,7 @@ export default function HomePage() {
 								fontFamily: "inherit",
 							}}
 						>
-							<Search size={14} />
+							<Search size={16} />
 							검색
 						</button>
 					</div>
