@@ -229,22 +229,13 @@ body {
 }
 
 .chat-desk-scope .desk-answer-card::before {
-  content: attr(data-route);
+  content: none;
+}
+
+.chat-desk-scope .desk-answer-agent-mark {
   position: absolute;
   top: 0;
   left: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: 11px;
-  background: linear-gradient(135deg, var(--desk-accent), color-mix(in srgb, var(--desk-accent) 72%, #00aeef));
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: -0.05em;
-  box-shadow: 0 10px 22px color-mix(in srgb, var(--desk-accent) 20%, transparent);
 }
 
 .chat-desk-scope .desk-answer-head {
@@ -1334,33 +1325,33 @@ body {
 .badge-pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
+  gap: 6px;
+  padding: 4px 11px;
   border-radius: 9999px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 800;
   color: #fff;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), 0 10px 22px rgba(15, 23, 42, 0.1);
 }
-.badge-main     { background: var(--agent-main); }
-.badge-library  { background: var(--agent-library); }
-.badge-document { background: var(--agent-document); }
+.badge-pill svg { flex-shrink: 0; }
+.badge-main     { background: linear-gradient(135deg, #0052cc, #1d8fff); }
+.badge-library  { background: linear-gradient(135deg, #177a8a, #27b3c4); }
+.badge-document { background: linear-gradient(135deg, #4f46e5, #8b5cf6); }
 
 .avatar-circle {
   width: 36px; height: 36px;
-  border-radius: 50%;
+  border-radius: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
   color: #fff;
   flex-shrink: 0;
-  letter-spacing: -0.02em;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.34), 0 14px 28px rgba(15, 23, 42, 0.12);
 }
-.avatar-main     { background: var(--agent-main); }
-.avatar-library  { background: var(--agent-library); }
-.avatar-document { background: var(--agent-document); }
+.avatar-main     { background: linear-gradient(135deg, #0048b8, #1d8fff); }
+.avatar-library  { background: linear-gradient(135deg, #126f7d, #2ebac8); }
+.avatar-document { background: linear-gradient(135deg, #4f46e5, #8b5cf6); }
 
 /* ───── Input bar ───── */
 .input-bar {
@@ -1392,6 +1383,8 @@ body {
 }
 .review-card .ProseMirror {
   min-height: 190px;
+  font-size: 16px;
+  line-height: 1.8;
   outline: none;
 }
 .review-card .ProseMirror p {
@@ -1399,7 +1392,7 @@ body {
 }
 .review-card .ProseMirror table {
   border-collapse: collapse;
-  margin: 8px 0;
+  margin: 16px 0 20px;
   width: max-content;
   max-width: 100%;
 }
@@ -1449,7 +1442,7 @@ body {
   border-radius: 999px;
   background: #FFF4CC;
   color: #8A5A00;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 900;
   box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.14);
 }
@@ -1461,10 +1454,10 @@ body {
   letter-spacing: 0;
 }
 .review-markdown h2 {
-  font-size: 16px;
+  font-size: 18px;
 }
 .review-markdown h3 {
-  font-size: 14px;
+  font-size: 16px;
   margin-top: 20px;
 }
 .review-markdown p {
@@ -1487,13 +1480,13 @@ body {
 }
 .review-markdown .review-finding-title {
   margin-bottom: 6px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
   color: var(--text-1);
 }
 .review-markdown .review-check-card {
   color: var(--text-1);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.65;
 }
 .review-markdown .space-visible {
@@ -1516,7 +1509,7 @@ body {
 }
 .review-document-preview table {
   border-collapse: collapse;
-  margin: 14px 0;
+  margin: 18px 0 22px;
   width: auto;
   max-width: 100%;
   overflow: visible !important;
@@ -1559,21 +1552,26 @@ body {
 }
 
 .review-floating-tooltip {
-  position: fixed;
+  position: absolute;
   z-index: 9999;
   width: max-content;
-  max-width: min(340px, 70vw);
-  padding: 9px 11px;
+  max-width: min(380px, calc(100% - 32px));
+  box-sizing: border-box;
+  padding: 10px 12px;
   border-radius: 10px;
   background: rgba(17, 24, 39, 0.94);
   color: #fff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.55;
   white-space: normal;
   box-shadow: 0 14px 30px rgba(17, 24, 39, 0.22);
   pointer-events: none;
-  transform: translate(-50%, -100%);
+  transform: translateY(calc(-100% - 10px));
+}
+
+.review-floating-tooltip.is-below {
+  transform: translateY(10px);
 }
 
 .review-issue-mark:has(.review-issue-mark:hover)::after {
@@ -1589,7 +1587,7 @@ body {
 .review-annotation-panel h4 {
   margin: 0 0 10px;
   color: var(--text-1);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 900;
 }
 
@@ -1630,7 +1628,7 @@ body {
   border-radius: 999px;
   background: #FFF4CC;
   color: #8A5A00;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -1641,14 +1639,14 @@ body {
 }
 
 .review-annotation-item strong {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 900;
 }
 
 .review-annotation-item em {
   min-width: 0;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: 14px;
   font-style: normal;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1658,7 +1656,7 @@ body {
 .review-format-note {
   margin: 10px 0 0;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.6;
 }
 

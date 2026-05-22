@@ -5,7 +5,7 @@ import type { Message, AgentType, ChatHistory, ConversationDetail } from '@/type
 import { getConversationDetail, listConversations, normalizeTableChecks, reviewDocument, sendQueryToSpringStream } from '@/utils/aiService';
 import type { DocumentReviewApiResponse } from '@/utils/aiService';
 import { resolvePageNavigationTarget } from '@/utils/pageNavigation';
-import { agentConfig } from '@/components/common/AgentBadge';
+import AgentBadge, { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
 import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
 import CampusMapCard, {
@@ -729,7 +729,7 @@ export default function ChatPage() {
     setIsLoading(true);
     setMessages(p => p.map(m => m.showDocInput ? { ...m, showDocInput: false } : m));
     push({ id: `check-${Date.now()}`, role: 'assistant', agentType: 'document', timestamp: new Date(),
-      content: '작성하신 문서를 ○○ 규정 및 공문서 작성 준칙에 따라 정밀 검토 중입니다. 잠시만 기다려 주세요.' });
+      content: '작성하신 문서를 문서 규정 및 공문서 작성 준칙에 따라 정밀 검토 중입니다. 잠시만 기다려 주세요.' });
 
     try {
       const sourceHtml = doc.rawHtml || doc.html;
@@ -948,6 +948,9 @@ export default function ChatPage() {
                         data-route={meta.routeLabel}
                         style={{ '--desk-accent': meta.scanColor } as CSSProperties}
                       >
+                        <div className="desk-answer-agent-mark">
+                          <AgentBadge type={type} />
+                        </div>
                         <div className="desk-answer-head">
                           <div className="msg-agent-header">
                             <span className="msg-agent-name">{cfg.label}</span>

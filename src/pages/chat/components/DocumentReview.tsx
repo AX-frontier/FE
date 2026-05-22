@@ -99,9 +99,27 @@ function escapeHtml(value: string): string {
 
 function sanitizeClipboardDocument(doc: Document): void {
   doc
-    .querySelectorAll('script, iframe, object, embed, svg, base, meta, link, style, form, input, button')
+    .querySelectorAll('script, iframe, object, embed, svg, base, meta, link, style, form, input, button, xml, template')
     .forEach((node) => node.remove());
+  const comments = doc.createTreeWalker(doc.body, NodeFilter.SHOW_COMMENT);
+  const commentsToRemove: Node[] = [];
+  let comment = comments.nextNode();
+  while (comment) {
+    commentsToRemove.push(comment);
+    comment = comments.nextNode();
+  }
+  commentsToRemove.forEach((node) => node.parentNode?.removeChild(node));
   doc.querySelectorAll<HTMLElement>('*').forEach((element) => {
+    const tagName = element.tagName.toLowerCase();
+    if (tagName.includes(':')) {
+      element.remove();
+      return;
+    }
+    const style = element.getAttribute('style')?.toLowerCase() ?? '';
+    if (element.hidden || style.includes('display:none') || style.includes('display: none') || style.includes('mso-hide:all')) {
+      element.remove();
+      return;
+    }
     Array.from(element.attributes).forEach((attribute) => {
       const name = attribute.name.toLowerCase();
       const value = attribute.value.trim().toLowerCase();
@@ -158,6 +176,7 @@ interface ReviewAnnotation {
   title: string;
   message: string;
   reason: string;
+  ruleCode?: string;
   originalText?: string | null;
   suggestedText?: string | null;
   candidates: string[];
@@ -167,7 +186,11 @@ interface FloatingTooltip {
   text: string;
   x: number;
   y: number;
+  placement: 'above' | 'below';
 }
+
+const REVIEW_TOOLTIP_MAX_WIDTH = 380;
+const REVIEW_TOOLTIP_VIEWPORT_MARGIN = 16;
 
 function plainTextToHtml(text: string): string {
   return text
@@ -193,6 +216,7 @@ function buildReviewAnnotations(
     title: finding.category,
     message: finding.suggestedText ? `${finding.originalText} → ${finding.suggestedText}` : finding.originalText,
     reason: finding.reason,
+    ruleCode: finding.ruleCode,
     originalText: finding.originalText,
     suggestedText: finding.suggestedText,
     candidates: [finding.originalText, finding.suggestedText ?? ''].filter(Boolean),
@@ -223,11 +247,24 @@ function buildReviewAnnotations(
   return [...fixAnnotations, ...checkAnnotations, ...tableAnnotations];
 }
 
+function findExactTableCell(doc: Document, candidate: string, normalizedCandidate: string): HTMLElement | null {
+  const trimmedCandidate = candidate.trim();
+  const cells = Array.from(doc.querySelectorAll<HTMLElement>('th,td'));
+  return cells.find((cell) => {
+    const label = (cell.textContent ?? '').replace(/\s+/g, ' ').trim();
+    return label === trimmedCandidate || label === normalizedCandidate;
+  }) ?? null;
+}
+
 function markFirstTextMatch(doc: Document, root: HTMLElement, candidate: string, annotation: ReviewAnnotation): boolean {
   const normalizedCandidate = candidate.replace(/\s+/g, ' ').trim();
-  if (normalizedCandidate.length < 2) return false;
+  if (normalizedCandidate.length === 0) return false;
+  if (normalizedCandidate.length < 2 && annotation.kind !== 'fix') return false;
 
-  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const matchRoot = annotation.ruleCode === 'BUDGET_TABLE_HEADER'
+    ? findExactTableCell(doc, candidate, normalizedCandidate) ?? root
+    : root;
+  const walker = doc.createTreeWalker(matchRoot, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode();
   while (node) {
     const text = node.textContent ?? '';
@@ -323,7 +360,7 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
           <FileText size={18} color="var(--agent-document)" />
           <div>
             <span style={{ display: 'block', fontSize: 18, fontWeight: 850, color: 'var(--text-1)', letterSpacing: '-0.04em' }}>문서 입력</span>
-            <span style={{ display: 'block', marginTop: 2, fontSize: 12, color: 'var(--text-3)' }}>문서의 본문 또는 초안을 붙여넣으세요.</span>
+            <span style={{ display: 'block', marginTop: 2, fontSize: 14, color: 'var(--text-3)' }}>문서의 본문 또는 초안을 붙여넣으세요.</span>
           </div>
         </div>
       </div>
@@ -332,7 +369,7 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
         style={{
           minHeight: 300,
           padding: '28px 32px',
-          fontSize: 15,
+          fontSize: 16,
           lineHeight: 1.8,
           color: 'var(--text-1)',
           overflowX: 'auto',
@@ -344,7 +381,7 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '10px 14px', borderTop: '1px solid var(--border)',
       }}>
-        <span style={{ fontSize: 13, color: 'var(--text-3)' }}>
+        <span style={{ fontSize: 14, color: 'var(--text-3)' }}>
           {textLength}자
           {rawClipboardHtml ? ' · 원본 서식 보존' : ''}
         </span>
@@ -353,7 +390,7 @@ export function DocumentInput({ onSubmit, isLoading, initialText }: InputProps) 
             onClick={handleSubmit}
             disabled={!editor || textLength === 0 || isLoading}
             className="btn-blue"
-            style={{ padding: '7px 16px', borderRadius: 7, fontSize: 12, fontFamily: 'inherit' }}
+            style={{ padding: '9px 18px', borderRadius: 8, fontSize: 14, fontFamily: 'inherit' }}
           >
             {isLoading ? '검수 중...' : '검수하기'}
           </button>
@@ -458,10 +495,23 @@ export function ReviewResult({
       setTooltip(null);
       return;
     }
-    const tooltipHalfWidth = 170;
-    const x = Math.min(Math.max(event.clientX, tooltipHalfWidth), window.innerWidth - tooltipHalfWidth);
-    const y = Math.max(16, event.clientY - 14);
-    setTooltip({ text, x, y });
+    const rect = target.getBoundingClientRect();
+    const boundary = event.currentTarget.closest<HTMLElement>('.review-preview-grid');
+    if (!boundary) {
+      setTooltip(null);
+      return;
+    }
+    const boundaryRect = boundary.getBoundingClientRect();
+    const tooltipWidth = Math.min(REVIEW_TOOLTIP_MAX_WIDTH, boundaryRect.width - REVIEW_TOOLTIP_VIEWPORT_MARGIN * 2);
+    const minX = REVIEW_TOOLTIP_VIEWPORT_MARGIN;
+    const maxX = Math.max(minX, boundaryRect.width - tooltipWidth - REVIEW_TOOLTIP_VIEWPORT_MARGIN);
+    const x = Math.min(
+      Math.max(rect.left - boundaryRect.left, minX),
+      maxX,
+    );
+    const shouldShowAbove = rect.top - boundaryRect.top > 96;
+    const y = shouldShowAbove ? rect.top - boundaryRect.top : rect.bottom - boundaryRect.top;
+    setTooltip({ text, x, y, placement: shouldShowAbove ? 'above' : 'below' });
   };
 
   return (
@@ -471,15 +521,15 @@ export function ReviewResult({
       <div className="review-card review-summary-card" style={{ padding: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 10 }}>
           <div>
-            <span style={{ display: 'block', fontSize: 16, fontWeight: 850, color: 'var(--text-1)', letterSpacing: '-0.04em' }}>문서 검토 결과</span>
+            <span style={{ display: 'block', fontSize: 18, fontWeight: 850, color: 'var(--text-1)', letterSpacing: '-0.04em' }}>문서 검토 결과</span>
             <span className="review-suggestion-count">수정 제안: {findings.length}건</span>
             {checkRequiredItems.length + tableChecks.length > 0 && (
-              <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-3)' }}>
+              <span style={{ marginLeft: 8, fontSize: 14, color: 'var(--text-3)' }}>
                 직접 확인 필요 {checkRequiredItems.length + tableChecks.length}건
               </span>
             )}
           </div>
-          <span style={{ fontSize: 16, fontWeight: 800, color, letterSpacing: '-0.02em' }}>{score}% <span style={{ fontSize: 12, fontWeight: 600 }}>{label}</span></span>
+          <span style={{ fontSize: 18, fontWeight: 800, color, letterSpacing: '-0.02em' }}>{score}% <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span></span>
         </div>
         <div className="progress-bar">
           <div className="progress-fill" style={{ width: `${score}%`, background: color }} />
@@ -490,7 +540,7 @@ export function ReviewResult({
       {correctedText && (
         <div className="review-card">
           <div className="review-card-header">
-            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-1)' }}>검토 전후 비교</span>
+            <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-1)' }}>검토 전후 비교</span>
             <div style={{ display: 'flex', gap: 4 }}>
               {[
                 { icon: <Copy size={12} />, label: copyButtonLabel, onClick: handleCopy },
@@ -502,7 +552,7 @@ export function ReviewResult({
                   onClick={btn.onClick}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 4,
-                    padding: '4px 10px', borderRadius: 5, fontSize: 11, fontWeight: 500,
+                    padding: '5px 11px', borderRadius: 6, fontSize: 13, fontWeight: 700,
                     border: 'none', background: 'none', cursor: 'pointer',
                     color: 'var(--blue)', fontFamily: 'inherit', transition: 'background 0.12s',
                   }}
@@ -515,7 +565,9 @@ export function ReviewResult({
             </div>
           </div>
           <div
+            className="review-preview-grid"
             style={{
+              position: 'relative',
               display: 'grid',
               gridTemplateColumns: 'minmax(0, 1fr) 38px minmax(0, 1fr)',
               gap: 10,
@@ -532,12 +584,12 @@ export function ReviewResult({
                 overflow: 'hidden',
               }}
             >
-              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 800, color: 'var(--text-2)' }}>
+              <div style={{ padding: '9px 12px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 800, color: 'var(--text-2)' }}>
                 검토 전
               </div>
               <div
                 className="review-document-preview"
-                style={{ minHeight: 220, maxHeight: 520, padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', overflow: 'auto' }}
+                style={{ minHeight: 220, maxHeight: 520, padding: '16px 18px', fontSize: 15, lineHeight: 1.85, color: 'var(--text-1)', overflow: 'auto' }}
                 onMouseMove={handlePreviewTooltip}
                 onMouseLeave={() => setTooltip(null)}
                 dangerouslySetInnerHTML={{ __html: originalPreviewHtml }}
@@ -565,26 +617,26 @@ export function ReviewResult({
                 overflow: 'hidden',
               }}
             >
-              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 800, color: 'var(--text-2)' }}>
+              <div style={{ padding: '9px 12px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 800, color: 'var(--text-2)' }}>
                 검토 후
               </div>
               <div
                 className="review-document-preview"
-                style={{ minHeight: 220, maxHeight: 520, padding: '14px 16px', fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', overflow: 'auto' }}
+                style={{ minHeight: 220, maxHeight: 520, padding: '16px 18px', fontSize: 15, lineHeight: 1.85, color: 'var(--text-1)', overflow: 'auto' }}
                 onMouseMove={handlePreviewTooltip}
                 onMouseLeave={() => setTooltip(null)}
                 dangerouslySetInnerHTML={{ __html: correctedPreviewHtml }}
               />
             </div>
+            {tooltip && (
+              <div
+                className={`review-floating-tooltip is-${tooltip.placement}`}
+                style={{ left: tooltip.x, top: tooltip.y }}
+              >
+                {tooltip.text}
+              </div>
+            )}
           </div>
-          {tooltip && (
-            <div
-              className="review-floating-tooltip"
-              style={{ left: tooltip.x, top: tooltip.y }}
-            >
-              {tooltip.text}
-            </div>
-          )}
           {(confirmationAnnotations.length > 0 || formatNoticeItems.length > 0) && (
             <div className="review-annotation-panel">
               {confirmationAnnotations.length > 0 && (
@@ -614,7 +666,7 @@ export function ReviewResult({
             </div>
           )}
           {(copyNotice || copyError) && (
-            <div style={{ padding: '8px 14px 12px', fontSize: 11, lineHeight: 1.5, color: copyError ? 'var(--err)' : 'var(--text-3)' }}>
+            <div style={{ padding: '9px 14px 13px', fontSize: 13, lineHeight: 1.55, color: copyError ? 'var(--err)' : 'var(--text-3)' }}>
               {copyError ?? copyNotice}
             </div>
           )}
