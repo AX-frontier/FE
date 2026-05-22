@@ -17,6 +17,7 @@ import type {
 	ClientLocationPayload,
 	DocumentReviewApiResponse,
 } from "@/utils/aiService";
+import { resolvePageNavigationTarget } from "@/utils/pageNavigation";
 import {
 	BookOpen,
 	ClipboardCheck,
@@ -834,6 +835,29 @@ export default function ChatRedesignPage() {
 			content: text,
 			timestamp: new Date(),
 		});
+
+		const pageTarget = resolvePageNavigationTarget(text);
+		if (pageTarget) {
+			window.open(pageTarget.url, "_blank", "noopener,noreferrer");
+			setCurrentAgent("main");
+			push({
+				id: `page-nav-${Date.now()}`,
+				role: "assistant",
+				content: `${pageTarget.label} 페이지를 새 탭으로 열었습니다.\n\n${pageTarget.url}`,
+				agentType: "main",
+				timestamp: new Date(),
+				sourceLinks: [
+					{
+						title: pageTarget.label,
+						url: pageTarget.url,
+						label: "바로가기",
+					},
+				],
+			});
+			isSendingRef.current = false;
+			setIsLoading(false);
+			return;
+		}
 
 		const discoveryId = `desk-check-${Date.now()}`;
 		push({
