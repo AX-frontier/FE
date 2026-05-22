@@ -15,6 +15,30 @@ const NAVIGATION_TERMS = [
 	"접속",
 ];
 
+const INFORMATION_QUESTION_TERMS = [
+	"몇시",
+	"몇 시",
+	"언제",
+	"운영시간",
+	"운영 시간",
+	"개관",
+	"휴관",
+	"몇시에",
+	"몇 시에",
+	"몇시까지",
+	"몇 시까지",
+	"알려줘",
+];
+
+const EXPLICIT_PAGE_TERMS = [
+	"페이지",
+	"사이트",
+	"링크",
+	"바로가기",
+	"이동",
+	"접속",
+];
+
 export const PAGE_NAVIGATION_TARGETS: PageNavigationTarget[] = [
 	{
 		label: "웹메일",
@@ -84,7 +108,17 @@ function compact(value: string): string {
 
 function hasNavigationIntent(message: string): boolean {
 	const normalized = compact(message);
-	return NAVIGATION_TERMS.some((term) => normalized.includes(compact(term)));
+	if (!NAVIGATION_TERMS.some((term) => normalized.includes(compact(term)))) {
+		return false;
+	}
+	if (INFORMATION_QUESTION_TERMS.some((term) => normalized.includes(compact(term)))) {
+		return false;
+	}
+	return (
+		EXPLICIT_PAGE_TERMS.some((term) => normalized.includes(compact(term))) ||
+		normalized.endsWith("열어") ||
+		normalized.endsWith("열어줘")
+	);
 }
 
 export function resolvePageNavigationTarget(
