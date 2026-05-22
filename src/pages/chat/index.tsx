@@ -4,6 +4,7 @@ import { BookOpen, ExternalLink, FileCheck, Menu, Paperclip, RotateCcw, Send } f
 import type { Message, AgentType, ChatHistory, ConversationDetail } from '@/types/chat';
 import { getConversationDetail, listConversations, normalizeTableChecks, reviewDocument, sendQueryToSpringStream } from '@/utils/aiService';
 import type { DocumentReviewApiResponse } from '@/utils/aiService';
+import { resolvePageNavigationTarget } from '@/utils/pageNavigation';
 import { agentConfig } from '@/components/common/AgentBadge';
 import Sidebar from '@/components/common/Sidebar';
 import { DocumentInput, ReviewResult, type DocumentSubmitPayload } from './components/DocumentReview';
@@ -28,10 +29,17 @@ type DisplayMessage = Message & {
   feedbackText?: string;
   showDocInput?: boolean;
   initialDocText?: string;
+  sourceLinks?: SourceLink[];
   bookMatches?: BookMatch[];
   searchKeyword?: string | null;
   resultCount?: number | null;
   mapResult?: CampusMapResult;
+};
+
+type SourceLink = {
+  title: string;
+  url: string;
+  label?: string;
 };
 
 type BookMatch = {
@@ -114,6 +122,51 @@ function renderMessageHtml(content: string): string {
       return `<p>${safe}</p>`;
     })
     .join('');
+}
+
+function sourceLinksFromSources(sources: unknown): SourceLink[] {
+  if (!Array.isArray(sources)) {
+    const nested = asRecord(sources)?.sources;
+    if (!Array.isArray(nested)) return [];
+    return sourceLinksFromSources(nested);
+  }
+  return sources
+    .map((source, index): SourceLink | null => {
+      const record = asRecord(source);
+      if (!record) return null;
+      const rawUrl = record.sourceUrl ?? record.url ?? record.link ?? record.href ?? record.pageUrl;
+      if (typeof rawUrl !== 'string') return null;
+      const url = safeHref(rawUrl);
+      if (!url) return null;
+      const rawTitle = record.title ?? record.name ?? record.pageTitle ?? record.documentTitle ?? `참고 ${index + 1}`;
+      const title = typeof rawTitle === 'string' && rawTitle.trim() ? rawTitle.trim() : `참고 ${index + 1}`;
+      const rawDate = record.updatedAt ?? record.date ?? record.publishedAt;
+      return {
+        title,
+        url,
+        label: typeof rawDate === 'string' && rawDate.trim() ? rawDate : undefined,
+      };
+    })
+    .filter((source): source is SourceLink => Boolean(source));
+}
+
+function sourceLinksFromText(content: string): SourceLink[] {
+  const matches = content.match(/https?:\/\/[^\s<)]+/g) ?? [];
+  return Array.from(new Set(matches))
+    .map((url, index): SourceLink | null => {
+      const href = safeHref(url);
+      if (!href) return null;
+      return { title: `관련 페이지 ${index + 1}`, url: href };
+    })
+    .filter((source): source is SourceLink => Boolean(source));
+}
+
+function mergeSourceLinks(primary: SourceLink[], fallbackContent: string): SourceLink[] {
+  const byUrl = new Map<string, SourceLink>();
+  for (const source of [...primary, ...sourceLinksFromText(fallbackContent)]) {
+    if (!byUrl.has(source.url)) byUrl.set(source.url, source);
+  }
+  return Array.from(byUrl.values()).slice(0, 4);
 }
 
 function toHistoryItem(item: {
@@ -325,6 +378,9 @@ function toDisplayMessages(detail: ConversationDetail): DisplayMessage[] {
         : message.content,
       timestamp: new Date(message.createdAt),
       agentType: message.role === 'assistant' ? lastAgent : undefined,
+      sourceLinks: message.role === 'assistant'
+        ? mergeSourceLinks(sourceLinksFromSources(message.metadata?.sources), message.content)
+        : undefined,
       bookMatches: libraryResult?.bookMatches,
       searchKeyword: libraryResult?.searchKeyword,
       resultCount: libraryResult?.resultCount,
@@ -559,6 +615,23 @@ export default function ChatPage() {
 
     push({ id: Date.now().toString(), role: 'user', content: text, timestamp: new Date() });
 
+    const pageTarget = resolvePageNavigationTarget(text);
+    if (pageTarget) {
+      window.open(pageTarget.url, '_blank', 'noopener,noreferrer');
+      setCurrentAgent('main');
+      push({
+        id: `page-nav-${Date.now()}`,
+        role: 'assistant',
+        content: `${pageTarget.label} 페이지를 새 탭으로 열었습니다.\n\n${pageTarget.url}`,
+        agentType: 'main',
+        timestamp: new Date(),
+        sourceLinks: [{ title: pageTarget.label, url: pageTarget.url, label: '바로가기' }],
+      });
+      isSendingRef.current = false;
+      setIsLoading(false);
+      return;
+    }
+
     const discoveryId = `discovery-${Date.now()}`;
     push({
       id: discoveryId, role: 'assistant', content: '', agentType: currentAgent,
@@ -605,19 +678,23 @@ export default function ChatPage() {
           ));
           ensureAnswerMessage(agent);
           if (event.requiresDocumentInput) {
+            const answer = (event.answer as string) || '검토할 전자결재 문서 본문을 입력해주세요.';
             setMessages(p => p.map(m => m.id === tid ? {
               ...m, agentType: agent, isTyping: false,
-              content: (event.answer as string) || '검토할 전자결재 문서 본문을 입력해주세요.',
+              content: answer,
               showDocInput: true,
+              sourceLinks: mergeSourceLinks(sourceLinksFromSources(event.sources), answer),
               bookMatches: bookMatchesFromUnknown(event.matchedBooks),
               searchKeyword: typeof event.searchKeyword === 'string' ? event.searchKeyword : null,
               resultCount: typeof event.resultCount === 'number' ? event.resultCount : null,
               mapResult: campusMapResultFromUnknown(event.mapResult),
             } : m));
           } else {
+            const answer = (event.answer as string) ?? '';
             setMessages(p => p.map(m => m.id === tid ? {
               ...m, agentType: agent, isTyping: false,
-              content: (event.answer as string) ?? m.content,
+              content: answer || m.content,
+              sourceLinks: mergeSourceLinks(sourceLinksFromSources(event.sources), answer || m.content),
               bookMatches: bookMatchesFromUnknown(event.matchedBooks),
               searchKeyword: typeof event.searchKeyword === 'string' ? event.searchKeyword : null,
               resultCount: typeof event.resultCount === 'number' ? event.resultCount : null,
@@ -888,6 +965,25 @@ export default function ChatPage() {
                         ) : (
                           <>
                             <div className="desk-markdown" dangerouslySetInnerHTML={{ __html: renderMessageHtml(msg.content) }} />
+                            {msg.sourceLinks && msg.sourceLinks.length > 0 && (
+                              <div className="desk-sources">
+                                <span className="desk-sources-label">참고</span>
+                                <div className="desk-source-list">
+                                  {msg.sourceLinks.map((source) => (
+                                    <a
+                                      key={source.url}
+                                      href={source.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="desk-source-link"
+                                    >
+                                      <span>{source.title}</span>
+                                      {source.label && <small>{source.label}</small>}
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             {msg.bookMatches && msg.bookMatches.length > 0 && (
                               <div className="desk-book-results">
                                 <div className="desk-book-results-head">
