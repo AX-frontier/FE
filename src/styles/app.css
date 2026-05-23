@@ -441,14 +441,14 @@ body {
 
 .chat-desk-scope .desk-book-results-head span {
   color: var(--desk-blue-dark);
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 950;
   letter-spacing: -0.03em;
 }
 
 .chat-desk-scope .desk-book-results-head small {
   color: var(--desk-muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 750;
 }
 
@@ -459,10 +459,10 @@ body {
 
 .chat-desk-scope .desk-book-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) minmax(140px, auto);
+  grid-template-columns: 28px minmax(0, 1fr) minmax(160px, auto);
   gap: 12px;
   align-items: baseline;
-  padding: 10px 0;
+  padding: 12px 0;
   border-bottom: 1px solid rgba(0, 32, 96, 0.055);
 }
 
@@ -472,28 +472,28 @@ body {
 
 .chat-desk-scope .desk-book-row > strong {
   color: var(--desk-accent);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 950;
 }
 
 .chat-desk-scope .desk-book-row span {
   display: block;
   color: #172033;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 900;
   letter-spacing: -0.025em;
 }
 
 .chat-desk-scope .desk-book-row p {
-  margin: 3px 0 0;
+  margin: 4px 0 0;
   color: #738095;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .chat-desk-scope .desk-book-row > small {
   color: #536174;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
   text-align: right;
 }
