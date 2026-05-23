@@ -1017,37 +1017,6 @@ export default function ChatPage() {
                             )}
                           </>
                         )}
-                        {msg.bookMatches && msg.bookMatches.length > 0 && (
-                          <div className="desk-book-results">
-                            <div className="desk-book-results-head">
-                              <span>추천 도서</span>
-                              <small>
-                                {msg.searchKeyword ? `"${msg.searchKeyword}" 검색` : '학술정보관 소장자료'}
-                                {typeof msg.resultCount === 'number' ? ` · ${msg.resultCount}건` : ''}
-                              </small>
-                            </div>
-                            <div className="desk-book-list">
-                              {msg.bookMatches.map((book, index) => (
-                                <div className="desk-book-row" key={`${book.id ?? book.title}-${index}`}>
-                                  <strong>{index + 1}</strong>
-                                  <div>
-                                    <span>{book.title}</span>
-                                    <p>
-                                      {[book.author, book.publisher, book.publishYear]
-                                        .filter(Boolean)
-                                        .join(' · ')}
-                                    </p>
-                                  </div>
-                                  <small>
-                                    {[book.stackLocation, book.stackShelf, book.holdingCallNo]
-                                      .filter(Boolean)
-                                      .join(' · ') || '위치 확인 필요'}
-                                  </small>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                       </div>
                     );
                   })()}
