@@ -393,7 +393,7 @@ function detectAgentFromText(content: string): AgentType {
   const libraryKeywords = ['도서관', '학술정보관', '도서', '책', '대출', '반납', '열람실'];
   const documentKeywords = ['결재', '문서', '기안', '공문', '검토', '검수'];
   const mapKeywords = ['어디', '위치', '가는 길', '가는길', '길찾기', '출입구'];
-  const campusPlaces = ['상상관', '학생회관', '공학관', '미래관', '탐구관', '도서관', '학술정보관'];
+  const campusPlaces = ['상상관', '상상큐브', '상상 큐브', '상상빌리지', '상상 빌리지', '학생회관', '공학관', '공학관A동', '공학관B동', '공학A', '공학B', '미래관', '탐구관', '학송', '학송관', '진리관', '창의관', '연구관', '지선관', '지선', '학군단', '학군', '우촌관', '인성관', '낙산관', '도서관', '학술정보관'];
   const bookLocationKeywords = ['책', '도서', '청구기호', '서가', '소장'];
   if (
     mapKeywords.some((keyword) => content.includes(keyword)) &&

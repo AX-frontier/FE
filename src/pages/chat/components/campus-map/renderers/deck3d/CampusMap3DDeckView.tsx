@@ -1,5 +1,6 @@
 import { AmbientLight, COORDINATE_SYSTEM, DirectionalLight, LightingEffect, OrbitView } from "@deck.gl/core";
 import { BitmapLayer, PathLayer, PolygonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
+import { ScenegraphLayer } from "@deck.gl/mesh-layers";
 import DeckGL from "@deck.gl/react";
 import { canvasToLocal } from "../../adapters/coordinateTransform";
 import { normalizeMapResult } from "../../adapters/normalizeMapResult";
@@ -89,6 +90,17 @@ type GroundLabelFeature = {
 	size: number;
 };
 
+type BuildingModelConfig = {
+	url: string;
+	bounds: {
+		min: readonly [number, number, number];
+		max: readonly [number, number, number];
+	};
+	orientation: [number, number, number];
+	minHeight: number;
+	placeIds?: readonly string[];
+};
+
 const ambientLight = new AmbientLight({ color: [255, 255, 255], intensity: 1.8 });
 const directionalLight = new DirectionalLight({
 	color: [255, 255, 255],
@@ -109,6 +121,149 @@ const GUIDE_WALKWAYS: WalkwayFeature[] = [
 	walkway([[270, 564], [260, 682], [274, 796], [388, 905], [586, 900], [650, 1018]], [226, 232, 240, 165], 2.2),
 	walkway([[274, 796], [260, 712], [125, 906]], [226, 232, 240, 150], 2.1),
 ];
+
+const BUILDING_MODEL_CONFIGS: Record<string, BuildingModelConfig> = {
+	"truth-hall": {
+		url: "/models/truth-hall.glb",
+		bounds: {
+			min: [-0.9508343935012817, -0.61509108543396, -0.5554260015487671],
+			max: [0.9487075805664062, 0.6188217401504517, 0.5538468360900879],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"future-hall": {
+		url: "/models/future-hall.glb",
+		bounds: {
+			min: [-0.9508780241012573, -0.43585410714149475, -0.6883870363235474],
+			max: [0.947085976600647, 0.43437302112579346, 0.6861690282821655],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"sangsang-hall": {
+		url: "/models/sangsang-hall.glb",
+		bounds: {
+			min: [-0.9507250189781189, -0.902379035949707, -0.6749051809310913],
+			max: [0.9488130211830139, 0.9004121422767639, 0.6720909476280212],
+		},
+		orientation: [0, 90, 90],
+		minHeight: 22,
+	},
+	"woochon-hall": {
+		url: "/models/woochon-hall.glb",
+		bounds: {
+			min: [-0.9605649709701538, -0.4031071066856384, -0.5493951439857483],
+			max: [0.9489669799804688, 0.3975161015987396, 0.5419819951057434],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"exploration-hall": {
+		url: "/models/exploration-hall.glb",
+		bounds: {
+			min: [-0.9507432579994202, -0.4629625082015991, -0.5599758625030518],
+			max: [0.9488511681556702, 0.4638557732105255, 0.5571703910827637],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"haksong-hall": {
+		url: "/models/haksong-hall.glb",
+		bounds: {
+			min: [-0.6349769830703735, -0.40412214398384094, -0.950805127620697],
+			max: [0.6297810077667236, 0.39528509974479675, 0.9489611387252808],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"sangsang-cube": {
+		url: "/models/sangsang-cube.glb",
+		bounds: {
+			min: [-0.9283520579338074, -0.5580354332923889, -0.9504767060279846],
+			max: [0.9263394474983215, 0.557437539100647, 0.9473657011985779],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"sangsang-village": {
+		url: "/models/sangsang-village.glb",
+		bounds: {
+			min: [-0.9508219957351685, -0.4798911511898041, -0.7230710983276367],
+			max: [0.9488019943237305, 0.47761815786361694, 0.7250319719314575],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"insung-hall": {
+		url: "/models/insung-hall.glb",
+		bounds: {
+			min: [-0.6382279992103577, -0.9506951570510864, -0.4804469347000122],
+			max: [0.6364120244979858, 0.9482720494270325, 0.4803599417209625],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"research-hall": {
+		url: "/models/research-hall.glb",
+		bounds: {
+			min: [-0.9506296515464783, -0.5827442407608032, -0.43181854486465454],
+			max: [0.9488799571990967, 0.5758600234985352, 0.43050023913383484],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"creativity-hall": {
+		url: "/models/creativity-hall.glb",
+		bounds: {
+			min: [-0.9507799744606018, -0.4484410285949707, -0.4099830090999603],
+			max: [0.9488319754600525, 0.4618220925331116, 0.40808311104774475],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"jiseon-hall": {
+		url: "/models/jiseon-hall.glb",
+		bounds: {
+			min: [-0.9508219957351685, -0.43341201543807983, -0.4197610318660736],
+			max: [0.9488360285758972, 0.4282720386981964, 0.4169020354747772],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	rotc: {
+		url: "/models/rotc.glb",
+		bounds: {
+			min: [-0.9508159756660461, -0.571579098701477, -0.6622670292854309],
+			max: [0.9488360285758972, 0.5690619945526123, 0.6607589721679688],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"naksan-hall": {
+		url: "/models/naksan-hall.glb",
+		bounds: {
+			min: [-0.7241169810295105, -0.5538601279258728, -0.9507421851158142],
+			max: [0.722108006477356, 0.5526120662689209, 0.948961079120636],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+	},
+	"engineering-complex": {
+		url: "/models/engineering-hall.glb",
+		bounds: {
+			min: [-0.9538896679878235, -0.5361486673355103, -0.9486950635910034],
+			max: [0.9493897557258606, 0.5309489369392395, 0.946942925453186],
+		},
+		orientation: [0, 0, 90],
+		minHeight: 18,
+		placeIds: ["engineering-a", "engineering-b"],
+	},
+};
+
+const BUILDING_MODEL_PLACE_IDS = new Set(
+	Object.entries(BUILDING_MODEL_CONFIGS).flatMap(([id, config]) => config.placeIds ?? [id]),
+);
 
 const SURFACE_PATHS: SurfacePathFeature[] = [
 	surfacePath([[70, 94], [76, 170], [110, 214], [150, 298], [164, 532], [212, 616], [260, 712], [274, 768], [388, 875]], [255, 255, 255, 205], 4.2, 0.18),
@@ -153,15 +308,17 @@ export default function CampusMap3DDeckView({ mapResult }: Props) {
 	const buildings = normalized.places
 		.filter((place) => place.category === "building" && place.polygon?.length)
 		.map((place) => toBuildingFeature(place, selectedId));
+	const modelBuildings = buildings.filter((building) => usesScenegraphModel(building));
+	const polygonBuildings = buildings.filter((building) => !usesScenegraphModel(building));
 	const gates = normalized.places
 		.filter((place) => place.category === "gate")
 		.map(toGateFeature);
 	const outdoorAreas = normalized.places
 		.filter((place) => place.category === "outdoor" && place.polygon?.length)
 		.map(toOutdoorFeature);
-	const roofDetails = buildings.flatMap(toRoofDetails);
-	const floorBands = buildings.flatMap(toFloorBands);
-	const verticalEdges = buildings.flatMap(toVerticalEdges);
+	const roofDetails = polygonBuildings.flatMap(toRoofDetails);
+	const floorBands = polygonBuildings.flatMap(toFloorBands);
+	const verticalEdges = polygonBuildings.flatMap(toVerticalEdges);
 	const buildingLabels = buildings.filter((building) => !building.selected && building.labelPriority >= 2);
 	const selectedBuildingLabels = buildings.filter((building) => building.selected);
 	const groundLabels = toGroundLabels(outdoorAreas);
@@ -180,6 +337,28 @@ export default function CampusMap3DDeckView({ mapResult }: Props) {
 	const routeFeature = normalized.routeLocal3d.length > 1
 		? [{ path: normalized.routeLocal3d, accessible: Boolean(mapResult.route?.accessible) }]
 		: [];
+	const buildingModelLayers = Object.entries(BUILDING_MODEL_CONFIGS).flatMap(([modelId, config]) => {
+		const placeIds = config.placeIds ?? [modelId];
+		const sourceBuildings = modelBuildings.filter((building) => placeIds.includes(building.id));
+		if (!sourceBuildings.length) return [];
+		const modelBuilding = mergeBuildingsForModel(modelId, config, sourceBuildings);
+		return [
+			new ScenegraphLayer<BuildingFeature>({
+				id: `campus-${modelId}-glb-3d`,
+				data: [modelBuilding],
+				scenegraph: config.url,
+				coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
+				getPosition: (item) => [item.roofCenter[0], item.roofCenter[1], 0],
+				getOrientation: config.orientation,
+				getScale: (item) => yUpModelScale(item, config),
+				getTranslation: (item) => yUpModelTranslation(item, config),
+				getColor: [255, 255, 255, 255],
+				sizeScale: 1,
+				pickable: true,
+				_lighting: "pbr",
+			}),
+		];
+	});
 
 	const layers = [
 		...vworldTileLayers,
@@ -252,7 +431,7 @@ export default function CampusMap3DDeckView({ mapResult }: Props) {
 		}),
 		new PolygonLayer<BuildingFeature>({
 			id: "campus-buildings-3d",
-			data: buildings,
+			data: polygonBuildings,
 			coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
 			extruded: true,
 			wireframe: false,
@@ -289,7 +468,7 @@ export default function CampusMap3DDeckView({ mapResult }: Props) {
 		}),
 		new PolygonLayer<BuildingFeature>({
 			id: "campus-roofs-3d",
-			data: buildings,
+			data: polygonBuildings,
 			coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
 			extruded: false,
 			getPolygon: (building) => building.roof,
@@ -309,7 +488,7 @@ export default function CampusMap3DDeckView({ mapResult }: Props) {
 		}),
 		new PathLayer<BuildingFeature>({
 			id: "campus-building-roof-lines-3d",
-			data: buildings,
+			data: polygonBuildings,
 			coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
 			getPath: (building) => [...building.roof, building.roof[0]],
 			getColor: (building) => building.selected ? [15, 118, 110, 255] : [17, 24, 39, 220],
@@ -317,6 +496,7 @@ export default function CampusMap3DDeckView({ mapResult }: Props) {
 			widthMinPixels: 1,
 			rounded: true,
 		}),
+		...buildingModelLayers,
 		new PathLayer<BuildingLineFeature>({
 			id: "campus-building-floor-bands-3d",
 			data: floorBands,
@@ -559,6 +739,86 @@ function toVerticalEdges(building: BuildingFeature): BuildingLineFeature[] {
 		color: building.selected ? [13, 148, 136, 210] : [15, 23, 42, 150],
 		width: building.selected ? 0.85 : 0.55,
 	}));
+}
+
+function usesScenegraphModel(building: BuildingFeature): boolean {
+	return BUILDING_MODEL_PLACE_IDS.has(building.id);
+}
+
+function mergeBuildingsForModel(modelId: string, config: BuildingModelConfig, buildings: BuildingFeature[]): BuildingFeature {
+	if (buildings.length === 1) return buildings[0];
+	const xs = buildings.flatMap((building) => building.polygon.map(([x]) => x));
+	const ys = buildings.flatMap((building) => building.polygon.map(([, y]) => y));
+	const minX = Math.min(...xs);
+	const maxX = Math.max(...xs);
+	const minY = Math.min(...ys);
+	const maxY = Math.max(...ys);
+	const centerX = (minX + maxX) / 2;
+	const centerY = (minY + maxY) / 2;
+	const height = Math.max(config.minHeight, ...buildings.map((building) => building.height));
+	const polygon: [number, number][] = [
+		[minX, minY],
+		[maxX, minY],
+		[maxX, maxY],
+		[minX, maxY],
+	];
+	return {
+		...buildings[0],
+		id: modelId,
+		name: buildings.map((building) => building.name).join(" / "),
+		polygon,
+		roof: polygon.map(([x, y]) => [x, y, height + 0.2]),
+		center: [centerX, centerY, height + 12],
+		signPosition: [centerX, centerY, height + 16],
+		roofCenter: [centerX, centerY, height + 0.35],
+		height,
+		selected: buildings.some((building) => building.selected),
+	};
+}
+
+function yUpModelScale(building: BuildingFeature, config: BuildingModelConfig): [number, number, number] {
+	const bounds = footprintBounds(building.polygon);
+	const [modelWidth, modelHeight, modelDepth] = modelSize(config.bounds);
+	return [
+		bounds.width / modelWidth,
+		Math.max(config.minHeight, building.height) / modelHeight,
+		bounds.depth / modelDepth,
+	];
+}
+
+function yUpModelTranslation(building: BuildingFeature, config: BuildingModelConfig): [number, number, number] {
+	const [scaleX, scaleY, scaleZ] = yUpModelScale(building, config);
+	const [centerX, , centerZ] = modelCenter(config.bounds);
+	return [
+		-centerX * scaleX,
+		centerZ * scaleZ,
+		-config.bounds.min[1] * scaleY,
+	];
+}
+
+function footprintBounds(polygon: [number, number][]): { width: number; depth: number } {
+	const xs = polygon.map(([x]) => x);
+	const ys = polygon.map(([, y]) => y);
+	return {
+		width: Math.max(...xs) - Math.min(...xs),
+		depth: Math.max(...ys) - Math.min(...ys),
+	};
+}
+
+function modelSize(bounds: BuildingModelConfig["bounds"]): [number, number, number] {
+	return [
+		bounds.max[0] - bounds.min[0],
+		bounds.max[1] - bounds.min[1],
+		bounds.max[2] - bounds.min[2],
+	];
+}
+
+function modelCenter(bounds: BuildingModelConfig["bounds"]): [number, number, number] {
+	return [
+		(bounds.min[0] + bounds.max[0]) / 2,
+		(bounds.min[1] + bounds.max[1]) / 2,
+		(bounds.min[2] + bounds.max[2]) / 2,
+	];
 }
 
 function buildingColor(id: string): [number, number, number, number] {

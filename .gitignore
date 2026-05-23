@@ -5,6 +5,10 @@ node_modules/
 dist/
 dist-ssr/
 
+# 3D 모델 원본은 대용량이라 별도 전달/CDN 배포
+public/models/*.glb
+!public/models/.gitkeep
+
 # 환경변수 (API 키 등 절대 커밋 금지)
 .env
 .env.local
